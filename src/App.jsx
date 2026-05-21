@@ -184,19 +184,7 @@ const AppCard = ({ a, products, properties, onEdit, onDelete, appCost }) => {
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [data, setData] = useState(initData);
-// Carrega dados do Firebase ao abrir o app
-useEffect(() => {
-  const load = async () => {
-    const saved = await loadData();
-    if (saved) setData(saved);
-  };
-  load();
-}, []);
-
-// Salva automaticamente sempre que os dados mudam
-useEffect(() => {
-  saveData(data);
-}, [data]);
+  const [loading, setLoading] = useState(true);
   const [selectedProp, setSelectedProp] = useState(1);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [notifOpen, setNotifOpen] = useState(false);
@@ -206,6 +194,26 @@ useEffect(() => {
   const [appFilter, setAppFilter] = useState("defensivo");
   const [appPropFilter, setAppPropFilter] = useState(0);
 
+  useEffect(() => {
+    const load = async () => {
+      const saved = await loadData();
+      if (saved) setData(saved);
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    if (!loading) saveData(data);
+  }, [data]);
+
+  if (loading) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "sans-serif", color: "#3B6D11", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 40 }}>🌿</div>
+      <p style={{ fontSize: 16 }}>Carregando AgroGestão...</p>
+    </div>
+  );
+  
   const unread = data.notifications.filter(n => !n.read).length;
   const markAllRead = () => setData(d => ({ ...d, notifications: d.notifications.map(n => ({ ...n, read: true })) }));
 

@@ -15,7 +15,16 @@ export const db = getFirestore(app);
 
 export const saveData = async (data) => {
   try {
-    await setDoc(doc(db, "agro", "dados"), data);
+    const payload = {
+      properties:    JSON.stringify(data.properties    || []),
+      products:      JSON.stringify(data.products      || []),
+      schedules:     JSON.stringify(data.schedules     || []),
+      applications:  JSON.stringify(data.applications  || []),
+      purchases:     JSON.stringify(data.purchases     || []),
+      notifications: JSON.stringify(data.notifications || []),
+    };
+    await setDoc(doc(db, "agro", "dados"), payload);
+    console.log("Dados salvos com sucesso");
   } catch (e) {
     console.error("Erro ao salvar:", e);
   }
@@ -24,8 +33,19 @@ export const saveData = async (data) => {
 export const loadData = async () => {
   try {
     const snap = await getDoc(doc(db, "agro", "dados"));
-    if (snap.exists()) return snap.data();
-    return null;
+    if (!snap.exists()) {
+      console.log("Nenhum dado encontrado no Firebase");
+      return null;
+    }
+    const raw = snap.data();
+    return {
+      properties:    JSON.parse(raw.properties    || "[]"),
+      products:      JSON.parse(raw.products      || "[]"),
+      schedules:     JSON.parse(raw.schedules     || "[]"),
+      applications:  JSON.parse(raw.applications  || "[]"),
+      purchases:     JSON.parse(raw.purchases     || "[]"),
+      notifications: JSON.parse(raw.notifications || "[]"),
+    };
   } catch (e) {
     console.error("Erro ao carregar:", e);
     return null;
