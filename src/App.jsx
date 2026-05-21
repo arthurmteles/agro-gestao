@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { saveData, loadData } from "./firebase";
+import { useState, useEffect } from "react";
 
 const COLORS = {
   green: "#3B6D11", greenLight: "#EAF3DE", greenMid: "#639922",
@@ -183,6 +184,19 @@ const AppCard = ({ a, products, properties, onEdit, onDelete, appCost }) => {
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [data, setData] = useState(initData);
+// Carrega dados do Firebase ao abrir o app
+useEffect(() => {
+  const load = async () => {
+    const saved = await loadData();
+    if (saved) setData(saved);
+  };
+  load();
+}, []);
+
+// Salva automaticamente sempre que os dados mudam
+useEffect(() => {
+  saveData(data);
+}, [data]);
   const [selectedProp, setSelectedProp] = useState(1);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [notifOpen, setNotifOpen] = useState(false);
