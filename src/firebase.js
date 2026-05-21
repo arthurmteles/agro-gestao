@@ -13,6 +13,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
+// ── Dados principais ──────────────────────────────────────────────
 export const saveData = async (data) => {
   try {
     const payload = {
@@ -24,7 +25,6 @@ export const saveData = async (data) => {
       notifications: JSON.stringify(data.notifications || []),
     };
     await setDoc(doc(db, "agro", "dados"), payload);
-    console.log("Dados salvos com sucesso");
   } catch (e) {
     console.error("Erro ao salvar:", e);
   }
@@ -33,10 +33,7 @@ export const saveData = async (data) => {
 export const loadData = async () => {
   try {
     const snap = await getDoc(doc(db, "agro", "dados"));
-    if (!snap.exists()) {
-      console.log("Nenhum dado encontrado no Firebase");
-      return null;
-    }
+    if (!snap.exists()) return null;
     const raw = snap.data();
     return {
       properties:    JSON.parse(raw.properties    || "[]"),
@@ -48,6 +45,26 @@ export const loadData = async () => {
     };
   } catch (e) {
     console.error("Erro ao carregar:", e);
+    return null;
+  }
+};
+
+// ── Usuários ──────────────────────────────────────────────────────
+export const saveUsers = async (users) => {
+  try {
+    await setDoc(doc(db, "agro", "usuarios"), { list: JSON.stringify(users) });
+  } catch (e) {
+    console.error("Erro ao salvar usuários:", e);
+  }
+};
+
+export const loadUsers = async () => {
+  try {
+    const snap = await getDoc(doc(db, "agro", "usuarios"));
+    if (!snap.exists()) return null;
+    return JSON.parse(snap.data().list || "[]");
+  } catch (e) {
+    console.error("Erro ao carregar usuários:", e);
     return null;
   }
 };

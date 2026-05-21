@@ -1,5 +1,8 @@
-import { saveData, loadData } from "./firebase";
 import { useState, useEffect } from "react";
+import { saveData, loadData, saveUsers, loadUsers } from "./firebase";
+import { DEFAULT_USERS, authenticate, hashPassword, canEdit, canDelete, canViewReports, canManageUsers, filterPropertiesByUser } from "./auth";
+import LoginScreen from "./LoginScreen";
+import UserManager from "./UserManager";
 
 const COLORS = {
   green: "#3B6D11", greenLight: "#EAF3DE", greenMid: "#639922",
@@ -194,18 +197,42 @@ export default function App() {
   const [appFilter, setAppFilter] = useState("defensivo");
   const [appPropFilter, setAppPropFilter] = useState(0);
 
+  // Auth
+  const [users, setUsers] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loginError, setLoginError] = useState("");
+
+  // Carrega dados e usuários
   useEffect(() => {
     const load = async () => {
-      const saved = await loadData();
+      const [saved, savedUsers] = await Promise.all([loadData(), loadUsers()]);
       if (saved) setData(saved);
+      setUsers(savedUsers || DEFAULT_USERS.map(u => ({ ...u, password: hashPassword(u.password) })));
       setLoading(false);
     };
     load();
   }, []);
 
+  // Salva dados
   useEffect(() => {
-    if (!loading) saveData(data);
+    if (!loading && currentUser) saveData(data);
   }, [data]);
+
+  // Salva usuários
+  useEffect(() => {
+    if (!loading && users.length > 0) saveUsers(users);
+  }, [users]);
+
+  const handleLogin = (username, password) => {
+    const user = authenticate(users, username, password);
+    if (user) { setCurrentUser(user); setLoginError(""); }
+    else setLoginError("Usuário ou senha incorretos.");
+  };
+
+  const handleLogout = () => { setCurrentUser(null); setTab("dashboard"); };
+
+  // Propriedades filtradas pelo usuário logado
+  const visibleProperties = currentUser ? filterPropertiesByUser(data.properties, currentUser) : [];
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "sans-serif", color: "#3B6D11", flexDirection: "column", gap: 12 }}>
@@ -213,6 +240,8 @@ export default function App() {
       <p style={{ fontSize: 16 }}>Carregando AgroGestão...</p>
     </div>
   );
+
+  if (!currentUser) return <LoginScreen onLogin={handleLogin} error={loginError} />;
   
   const unread = data.notifications.filter(n => !n.read).length;
   const markAllRead = () => setData(d => ({ ...d, notifications: d.notifications.map(n => ({ ...n, read: true })) }));
@@ -276,13 +305,14 @@ export default function App() {
     const el = document.createElement("a"); el.href = URL.createObjectURL(blob); el.download = "relatorio_agro.txt"; el.click();
   };
 
-  const navItems = [
-    { id: "dashboard", icon: "📊", label: "Início" },
-    { id: "calendar",  icon: "📅", label: "Cronograma" },
-    { id: "apply",     icon: "💧", label: "Aplicações" },
-    { id: "stock",     icon: "📦", label: "Estoque" },
-    { id: "reports",   icon: "📈", label: "Relatórios" },
-  ];
+const navItems = [
+  { id: "dashboard", icon: "📊", label: "Início" },
+  { id: "calendar",  icon: "📅", label: "Cronograma" },
+  { id: "apply",     icon: "💧", label: "Aplicações" },
+  { id: "stock",     icon: "📦", label: "Estoque" },
+  { id: "reports",   icon: "📈", label: "Relatórios", restricted: true },
+  { id: "users",     icon: "👥", label: "Usuários", masterOnly: true },
+];
 
   const filteredApps = (filter) => {
     const fn = filter === "defensivo" ? isDefensivo : isAdubo;
@@ -296,12 +326,18 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
-      <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div><div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão</div><div style={{ fontSize: 12, opacity: 0.85 }}>Café</div></div>
-        <button onClick={() => setNotifOpen(!notifOpen)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 14px", color: "#fff", cursor: "pointer", fontSize: 14, position: "relative" }}>
-          🔔{unread > 0 && <span style={{ background: COLORS.red, color: "#fff", borderRadius: 10, fontSize: 10, padding: "1px 5px", position: "absolute", top: 2, right: 2 }}>{unread}</span>}
-        </button>
+    <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div>
+        <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão</div>
+        <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
       </div>
+      <div style={{ display: "flex", gap: 8 }}>
+       <button onClick={() => setNotifOpen(!notifOpen)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 12px", color: "#fff", cursor: "pointer", fontSize: 14, position: "relative" }}>
+      🔔{unread > 0 && <span style={{ background: COLORS.red, color: "#fff", borderRadius: 10, fontSize: 10, padding: "1px 5px", position: "absolute", top: 2, right: 2 }}>{unread}</span>}
+       </button>
+       <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 12px", color: "#fff", cursor: "pointer", fontSize: 13 }}>Sair</button>
+     </div>
+    </div>
 
       {notifOpen && (
         <Card style={{ borderRadius: 0, borderLeft: "none", borderRight: "none" }}>
@@ -500,6 +536,16 @@ export default function App() {
           </div>
         )}
 
+	{/* USUÁRIOS */}
+	{tab === "users" && canManageUsers(currentUser.role) && (
+ 	 <UserManager
+   	 users={users}
+   	 setUsers={setUsers}
+   	 properties={data.properties}
+   	 currentUser={currentUser}
+ 	 />
+	)}
+
         {/* RELATÓRIOS */}
         {tab === "reports" && (
           <div>
@@ -564,13 +610,16 @@ export default function App() {
         </div>
       )}
 
-      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 420, background: "var(--color-background-primary)", borderTop: "0.5px solid var(--color-border-tertiary)", display: "flex" }}>
-        {navItems.map(n => (
-          <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 12px", border: "none", background: "none", cursor: "pointer", color: tab === n.id ? COLORS.green : "var(--color-text-secondary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-            <span style={{ fontSize: 18 }}>{n.icon}</span>
-            <span style={{ fontSize: 9, fontWeight: tab === n.id ? 500 : 400 }}>{n.label}</span>
-          </button>
-        ))}
+      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 420, background: "var(--color-background-primary)",         borderTop: "0.5px solid var(--color-border-tertiary)", display: "flex" }}>
+      {navItems
+      .filter(n => !n.masterOnly || canManageUsers(currentUser.role))
+      .filter(n => !n.restricted || canViewReports(currentUser.role))
+      .map(n => (
+        <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 12px", border: "none", background: "none", cursor: "pointer", color: tab === n.id ?    COLORS.green : "var(--color-text-secondary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <span style={{ fontSize: 18 }}>{n.icon}</span>
+          <span style={{ fontSize: 9, fontWeight: tab === n.id ? 500 : 400 }}>{n.label}</span>
+        </button>
+       ))}
       </div>
     </div>
   );
