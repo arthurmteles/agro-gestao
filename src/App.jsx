@@ -252,6 +252,22 @@ export default function App() {
   };
   const propCost = (propId) => data.applications.filter(a => a.propertyId === propId).reduce((s, a) => s + appCost(a), 0);
 
+// ── Planejado vs Realizado ────────────────────────────────────────
+  const appliedQtyForSchedule = (s, monthIdx) => {
+    return data.applications
+      .filter(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === monthIdx)
+      .reduce((sum, a) => sum + Number(a.qty), 0);
+  };
+
+  const scheduleCompletionPct = (s, monthIdx) => {
+    const prod = data.products.find(p => p.id === s.productId);
+    const prop = data.properties.find(p => p.id === s.propertyId);
+    const planned = (prod?.dosePerHa || 0) * (prop?.area || 0);
+    if (planned === 0) return 0;
+    const applied = appliedQtyForSchedule(s, monthIdx);
+    return Math.min(100, (applied / planned) * 100);
+  };
+
   const save = (type, item) => {
     setData(d => {
       const key = { application:"applications", purchase:"purchases", product:"products", schedule:"schedules", property:"properties" }[type];
@@ -390,20 +406,44 @@ const navItems = [
 
             <p style={{ fontWeight: 500, fontSize: 14, margin: "20px 0 8px" }}>Agenda do mês atual</p>
             {(() => {
-              const cur = new Date().getMonth() + 1;
+              const curMonth = new Date().getMonth();
+              const cur = curMonth + 1;
               const items = data.schedules.filter(s => s.months.includes(cur));
               if (!items.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação este mês.</p>;
               return items.map(s => {
                 const prod = data.products.find(p => p.id === s.productId);
                 const pr = data.properties.find(p => p.id === s.propertyId);
-                const done = data.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() + 1 === cur);
+                const semEstoque = (prod?.stock || 0) <= 0;
+                const pct = scheduleCompletionPct(s, curMonth);
+                const planned = (prod?.dosePerHa || 0) * (pr?.area || 0);
+                const applied = appliedQtyForSchedule(s, curMonth);
+                const done = pct >= 100;
+                const barColor = pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : COLORS.grayLight;
                 return (
                   <Card key={s.id} style={{ marginBottom: 8 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div><p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{prod?.name}</p><p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "0 0 6px" }}>{pr?.name}</p><Badge label={prod?.type} type={prod?.type} /></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                      <div>
+                        <p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{prod?.name}</p>
+                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "0 0 6px" }}>{pr?.name}</p>
+                        <Badge label={prod?.type} type={prod?.type} />
+                      </div>
                       {done
-                        ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20 }}>✓ Feito</span>
-                        : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: pr?.area, qty: ((prod?.dosePerHa || 0) * (pr?.area || 1)).toFixed(1), date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer" }}>Registrar</button>}
+                        ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>✓ 100%</span>
+                        : semEstoque
+                          ? <span style={{ fontSize: 12, color: COLORS.red, background: COLORS.redLight, padding: "4px 10px", borderRadius: 20 }}>Sem estoque</span>
+                          : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: pr?.area, qty: ((planned - applied) > 0 ? (planned - applied).toFixed(1) : ""), date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                            {pct > 0 ? "Completar" : "Registrar"}
+                          </button>}
+                    </div>
+                    <div style={{ marginBottom: 4 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 3 }}>
+                        <span>Realizado: <strong style={{ color: pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : "var(--color-text-secondary)" }}>{applied.toFixed(1)} {prod?.unit}</strong></span>
+                        <span style={{ fontWeight: 600, color: barColor }}>{pct.toFixed(0)}%</span>
+                      </div>
+                      <div style={{ background: "var(--color-background-secondary)", borderRadius: 4, height: 6 }}>
+                        <div style={{ width: pct + "%", background: barColor, height: "100%", borderRadius: 4, transition: "width 0.3s" }} />
+                      </div>
+                      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "3px 0 0" }}>Planejado: {planned.toFixed(1)} {prod?.unit}</p>
                     </div>
                   </Card>
                 );
@@ -560,6 +600,60 @@ const navItems = [
               <MetricCard label="Total em aplicações" value={"R$ " + data.applications.reduce((s,a) => s + appCost(a), 0).toLocaleString("pt-BR", { minimumFractionDigits: 0 })} />
               <MetricCard label="Total em compras" value={"R$ " + data.purchases.reduce((s,p) => s + (p.totalCost || 0), 0).toLocaleString("pt-BR", { minimumFractionDigits: 0 })} />
             </div>
+
+	    {/* ── RELATÓRIO PLANEJADO vs REALIZADO ── */}
+            <Card style={{ marginBottom: 12 }}>
+              <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 12px" }}>📋 Planejado vs Realizado por mês</p>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Propriedade</label>
+                <select value={selectedProp} onChange={e => setSelectedProp(Number(e.target.value))} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
+                  {data.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              {MONTHS.map((mLabel, mIdx) => {
+                const schedsThisMonth = data.schedules.filter(s => s.propertyId === selectedProp && s.months.includes(mIdx + 1));
+                if (!schedsThisMonth.length) return null;
+                return (
+                  <div key={mIdx} style={{ marginBottom: 14 }}>
+                    <p style={{ fontWeight: 500, fontSize: 13, margin: "0 0 8px", color: "var(--color-text-primary)", borderBottom: "0.5px solid var(--color-border-tertiary)", paddingBottom: 4 }}>{mLabel}</p>
+                    {schedsThisMonth.map(s => {
+                      const prod = data.products.find(p => p.id === s.productId);
+                      const prop = data.properties.find(p => p.id === s.propertyId);
+                      const planned = (prod?.dosePerHa || 0) * (prop?.area || 0);
+                      const applied = appliedQtyForSchedule(s, mIdx);
+                      const pct = planned > 0 ? Math.min(100, (applied / planned) * 100) : 0;
+                      const barColor = pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : COLORS.red;
+                      const statusLabel = pct >= 100 ? "✓ Concluído" : pct > 0 ? "Parcial" : "Pendente";
+                      const statusBg = pct >= 100 ? COLORS.greenLight : pct > 0 ? COLORS.amberLight : COLORS.redLight;
+                      const statusText = pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : COLORS.red;
+                      return (
+                        <div key={s.id} style={{ marginBottom: 10, padding: "10px 12px", background: "var(--color-background-secondary)", borderRadius: 10 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <div>
+                              <p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 13 }}>{prod?.name}</p>
+                              <Badge label={prod?.type} type={prod?.type} />
+                            </div>
+                            <span style={{ fontSize: 11, fontWeight: 600, background: statusBg, color: statusText, padding: "3px 10px", borderRadius: 20 }}>{statusLabel}</span>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+                            <span>Planejado: <strong>{planned.toFixed(1)} {prod?.unit}</strong></span>
+                            <span>Realizado: <strong style={{ color: barColor }}>{applied.toFixed(1)} {prod?.unit}</strong></span>
+                          </div>
+                          <div style={{ background: "var(--color-background-primary)", borderRadius: 4, height: 8, overflow: "hidden" }}>
+                            <div style={{ width: pct + "%", background: barColor, height: "100%", borderRadius: 4, transition: "width 0.3s" }} />
+                          </div>
+                          <p style={{ textAlign: "right", fontSize: 11, fontWeight: 600, color: barColor, margin: "3px 0 0" }}>{pct.toFixed(0)}%</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              {data.schedules.filter(s => s.propertyId === selectedProp).length === 0 && (
+                <p style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Nenhum agendamento para esta propriedade.</p>
+              )}
+            </Card>
+
             <Card style={{ marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px" }}>Custo por propriedade</p>
               {data.properties.map(p => {
@@ -629,6 +723,7 @@ function FormModal({ modal, data, onClose, onSave }) {
   const isEdit = !!modal.item?.id;
   const [form, setForm] = useState(modal.item || {});
   const [months, setMonths] = useState(modal.item?.months || []);
+  const [stockError, setStockError] = useState("");
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const titleMap = {
@@ -641,23 +736,43 @@ function FormModal({ modal, data, onClose, onSave }) {
 
   const submit = () => {
     const base = { ...form, id: form.id || Date.now() };
-    if (modal.type === "application") onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied), qty: Number(form.qty) });
-    else if (modal.type === "purchase") onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost) });
-    else if (modal.type === "product") onSave("product", { ...base, dosePerHa: Number(form.dosePerHa), price: Number(form.price) });
-    else if (modal.type === "schedule") onSave("schedule", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), months });
-    else if (modal.type === "property") onSave("property", { ...base, area: Number(form.area) });
+    if (modal.type === "application") {
+      const prod = data.products.find(p => p.id === Number(form.productId));
+      const qty = Number(form.qty);
+      if (!isEdit && prod && qty > prod.stock) {
+        setStockError("Quantidade (" + qty + " " + prod.unit + ") maior que o estoque disponível (" + prod.stock + " " + prod.unit + ").");
+        return;
+      }
+      if (!isEdit && prod && prod.stock <= 0) {
+        setStockError("Produto sem estoque disponível. Registre uma compra primeiro.");
+        return;
+      }
+      setStockError("");
+      onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied), qty });
+    } else if (modal.type === "purchase") {
+      onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost) });
+    } else if (modal.type === "product") {
+      onSave("product", { ...base, dosePerHa: Number(form.dosePerHa), price: Number(form.price) });
+    } else if (modal.type === "schedule") {
+      onSave("schedule", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), months });
+    } else if (modal.type === "property") {
+      onSave("property", { ...base, area: Number(form.area) });
+    }
   };
 
-  const inp = (label, key, type, placeholder) => (
+  const inp = (label, key, type, placeholder, suffix) => (
     <div style={{ marginBottom: 14 }}>
       <label style={{ fontSize: 13, color: "#fff", fontWeight: 700, display: "block", marginBottom: 5 }}>{label}</label>
-      <input type={type || "text"} value={form[key] !== undefined ? form[key] : ""} onChange={e => set(key, e.target.value)} placeholder={placeholder || ""} style={{ width: "100%", boxSizing: "border-box" }} />
+      <div style={{ position: "relative" }}>
+        <input type={type || "text"} value={form[key] !== undefined ? form[key] : ""} onChange={e => { set(key, e.target.value); if (key === "qty") setStockError(""); }} placeholder={placeholder || ""} style={{ width: "100%", boxSizing: "border-box", paddingRight: suffix ? 60 : 12 }} />
+        {suffix && <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#666", fontWeight: 500, pointerEvents: "none" }}>{suffix}</span>}
+      </div>
     </div>
   );
 
   const sel = (label, key, opts) => (
     <div style={{ marginBottom: 14 }}>
-      <label style={{ fontSize: 13, color: "var(--color-text-secondary)", display: "block", marginBottom: 5 }}>{label}</label>
+      <label style={{ fontSize: 13, color: "#fff", fontWeight: 700, display: "block", marginBottom: 5 }}>{label}</label>
       <select value={form[key] !== undefined ? form[key] : ""} onChange={e => set(key, e.target.value)} style={{ width: "100%" }}>
         <option value="">Selecione...</option>
         {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -666,16 +781,32 @@ function FormModal({ modal, data, onClose, onSave }) {
   );
 
   const renderFields = () => {
-    if (modal.type === "application") return (
-      <div>
-        {sel("Produto", "productId", data.products.map(p => ({ value: p.id, label: p.name })))}
-        {sel("Propriedade", "propertyId", data.properties.map(p => ({ value: p.id, label: p.name })))}
-        {inp("Data da aplicação", "date", "date")}
-        {inp("Área aplicada (ha)", "areaApplied", "number", "Ex: 45")}
-        {inp("Quantidade utilizada", "qty", "number", "Ex: 36")}
-        {inp("Observações", "notes", "text", "Ex: Concluída")}
-      </div>
-    );
+    if (modal.type === "application") {
+      const prod = data.products.find(p => p.id === Number(form.productId));
+      const stockOk = !prod || prod.stock > 0;
+      return (
+        <div>
+          {sel("Produto", "productId", data.products.map(p => ({ value: p.id, label: p.name + " (" + p.stock + " " + p.unit + " em estoque)" })))}
+          {prod && (
+            <div style={{ background: stockOk ? "rgba(255,255,255,0.15)" : "rgba(163,45,45,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
+              <p style={{ margin: 0, fontSize: 12, color: "#fff", fontWeight: 500 }}>
+                {stockOk ? "✅ Estoque disponível: " + prod.stock + " " + prod.unit : "⚠️ Produto sem estoque — registre uma compra primeiro"}
+              </p>
+            </div>
+          )}
+          {sel("Propriedade", "propertyId", data.properties.map(p => ({ value: p.id, label: p.name })))}
+          {inp("Data da aplicação", "date", "date")}
+          {inp("Área aplicada (ha)", "areaApplied", "number", "Ex: 45")}
+          {inp("Quantidade utilizada", "qty", "number", "Ex: 36", prod ? prod.unit : "")}
+          {stockError && (
+            <div style={{ background: "rgba(163,45,45,0.4)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
+              <p style={{ margin: 0, fontSize: 12, color: "#fff" }}>⚠️ {stockError}</p>
+            </div>
+          )}
+          {inp("Observações", "notes", "text", "Ex: Concluída")}
+        </div>
+      );
+    }
     if (modal.type === "purchase") return (
       <div>
         {sel("Produto", "productId", data.products.map(p => ({ value: p.id, label: p.name })))}
@@ -702,7 +833,7 @@ function FormModal({ modal, data, onClose, onSave }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
             {MONTHS.map((m, i) => (
               <button key={m} onClick={() => setMonths(ms => ms.includes(i+1) ? ms.filter(x => x !== i+1) : [...ms, i+1])}
-                style={{ padding: "7px 4px", borderRadius: 8, border: "0.5px solid " + (months.includes(i+1) ? COLORS.green : "var(--color-border-tertiary)"), background: months.includes(i+1) ? COLORS.greenLight : "var(--color-background-secondary)", color: months.includes(i+1) ? COLORS.green : "var(--color-text-primary)", fontSize: 12, cursor: "pointer", fontWeight: months.includes(i+1) ? 500 : 400 }}>
+                style={{ padding: "7px 4px", borderRadius: 8, border: "0.5px solid " + (months.includes(i+1) ? "#fff" : "rgba(255,255,255,0.3)"), background: months.includes(i+1) ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.08)", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: months.includes(i+1) ? 700 : 400 }}>
                 {m}
               </button>
             ))}
@@ -726,10 +857,10 @@ function FormModal({ modal, data, onClose, onSave }) {
       <div style={{ background: COLORS.green, borderRadius: "20px 20px 0 0", padding: "1.5rem 1.25rem 2rem", width: "100%", maxWidth: 420, maxHeight: "88vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <p style={{ fontWeight: 500, fontSize: 17, margin: 0, color: "#fff" }}>{titleMap[modal.type]}</p>
-          <button onClick={onClose} style={{ background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "50%", width: 32, height: 32, fontSize: 16, cursor: "pointer", color: "var(--color-text-secondary)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "50%", width: 32, height: 32, fontSize: 16, cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
         </div>
         {renderFields()}
-        <button onClick={submit} style={{ width: "100%", background: COLORS.green, color: "#fff", border: "none", borderRadius: 12, padding: 14, fontSize: 15, fontWeight: 500, cursor: "pointer", marginTop: 4 }}>
+        <button onClick={submit} style={{ width: "100%", background: "#fff", color: COLORS.green, border: "none", borderRadius: 12, padding: 14, fontSize: 15, fontWeight: 600, cursor: "pointer", marginTop: 4 }}>
           {isEdit ? "Salvar alterações" : "Adicionar"}
         </button>
       </div>
