@@ -13,7 +13,15 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
-// ── Dados principais ──────────────────────────────────────────────
+const parseField = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === "string") {
+    try { return JSON.parse(val); } catch { return []; }
+  }
+  return [];
+};
+
 export const saveData = async (data) => {
   try {
     const payload = {
@@ -25,6 +33,7 @@ export const saveData = async (data) => {
       notifications: JSON.stringify(data.notifications || []),
     };
     await setDoc(doc(db, "agro", "dados"), payload);
+    console.log("Dados salvos com sucesso");
   } catch (e) {
     console.error("Erro ao salvar:", e);
   }
@@ -36,12 +45,12 @@ export const loadData = async () => {
     if (!snap.exists()) return null;
     const raw = snap.data();
     return {
-      properties:    JSON.parse(raw.properties    || "[]"),
-      products:      JSON.parse(raw.products      || "[]"),
-      schedules:     JSON.parse(raw.schedules     || "[]"),
-      applications:  JSON.parse(raw.applications  || "[]"),
-      purchases:     JSON.parse(raw.purchases     || "[]"),
-      notifications: JSON.parse(raw.notifications || "[]"),
+      properties:    parseField(raw.properties),
+      products:      parseField(raw.products),
+      schedules:     parseField(raw.schedules),
+      applications:  parseField(raw.applications),
+      purchases:     parseField(raw.purchases),
+      notifications: parseField(raw.notifications),
     };
   } catch (e) {
     console.error("Erro ao carregar:", e);
@@ -49,7 +58,6 @@ export const loadData = async () => {
   }
 };
 
-// ── Usuários ──────────────────────────────────────────────────────
 export const saveUsers = async (users) => {
   try {
     await setDoc(doc(db, "agro", "usuarios"), { list: JSON.stringify(users) });
@@ -62,7 +70,9 @@ export const loadUsers = async () => {
   try {
     const snap = await getDoc(doc(db, "agro", "usuarios"));
     if (!snap.exists()) return null;
-    return JSON.parse(snap.data().list || "[]");
+    const raw = snap.data();
+    if (Array.isArray(raw.list)) return raw.list;
+    try { return JSON.parse(raw.list || "[]"); } catch { return null; }
   } catch (e) {
     console.error("Erro ao carregar usuários:", e);
     return null;
