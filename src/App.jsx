@@ -276,6 +276,7 @@ export default function App() {
   // ── Acesso por propriedade ─────────────────────────────────────
   // Master vê tudo; Operador/Leitura veem só as propriedades liberadas no cadastro do usuário
   const isMaster = currentUser.role === "master";
+  const isOperador = currentUser.role === "operador";
   const allowedIds = (() => {
     let pr = currentUser.properties;
     if (typeof pr === "string" && pr !== "all") { try { pr = JSON.parse(pr); } catch { pr = []; } }
@@ -409,7 +410,7 @@ export default function App() {
     { id: "dashboard", icon: "📊", label: "Início" },
     { id: "calendar",  icon: "📅", label: "Cronograma" },
     { id: "apply",     icon: "💧", label: "Aplicações" },
-    { id: "stock",     icon: "📦", label: "Estoque" },
+    { id: "stock",     icon: "📦", label: "Estoque", noOperador: true },
     { id: "reports",   icon: "📈", label: "Relatórios", restricted: true },
     { id: "users",     icon: "👥", label: "Usuários", masterOnly: true },
   ];
@@ -420,7 +421,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.5</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.6</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -458,7 +459,9 @@ export default function App() {
               <MetricCard label="Propriedades" value={vd.properties.length} sub="cadastradas" />
               <MetricCard label="Produtos" value={data.products.length} sub="no portfólio" />
               <MetricCard label="Aplicações" value={vd.applications.length} sub="registradas" />
-              <MetricCard label="Est. crítico" value={data.products.filter(p => p.stock < p.dosePerHa * 20).length} sub="produtos" color={COLORS.red} />
+              {isOperador
+                ? <MetricCard label="Programações" value={vd.schedules.length} sub="no cronograma" />
+                : <MetricCard label="Est. crítico" value={data.products.filter(p => p.stock < p.dosePerHa * 20).length} sub="produtos" color={COLORS.red} />}
             </div>
 
             <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{isMaster ? "Propriedades cadastradas" : "Sua propriedade"}</p>
@@ -526,6 +529,7 @@ export default function App() {
               });
             })()}
 
+            {!isOperador && (<>
             <p style={{ fontWeight: 500, fontSize: 14, margin: "20px 0 8px" }}>Estoque crítico</p>
             {data.products.filter(p => p.stock < p.dosePerHa * 20).map(p => (
               <Card key={p.id} style={{ marginBottom: 8, borderLeft: "3px solid " + (p.stock <= 0 ? COLORS.red : COLORS.amber), borderRadius: "0 12px 12px 0" }}>
@@ -541,6 +545,7 @@ export default function App() {
               </Card>
             ))}
             {data.products.filter(p => p.stock < p.dosePerHa * 20).length === 0 && <p style={{ color: COLORS.green, fontSize: 13 }}>✓ Todos os estoques adequados</p>}
+            </>)}
           </div>
         )}
 
@@ -672,7 +677,7 @@ export default function App() {
         )}
 
         {/* ESTOQUE */}
-        {tab === "stock" && (
+        {tab === "stock" && currentUser.role !== "operador" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Estoque</p>
@@ -837,6 +842,7 @@ export default function App() {
         {navItems
           .filter(n => !n.masterOnly || canManageUsers(currentUser.role))
           .filter(n => !n.restricted || canViewReports(currentUser.role))
+          .filter(n => !n.noOperador || currentUser.role !== "operador")
           .map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 12px", border: "none", background: "none", cursor: "pointer", color: tab === n.id ? COLORS.green : "var(--color-text-secondary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
               <span style={{ fontSize: 18 }}>{n.icon}</span>
