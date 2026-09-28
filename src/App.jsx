@@ -16,6 +16,8 @@ const MONTHS = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov
 const PRODUCT_TYPES = ["Adubo","Defensivo Fungicida","Defensivo Inseticida","Defensivo Herbicida","Micronutriente"];
 const isDefensivo = (t) => t?.startsWith("Defensivo");
 const isAdubo = (t) => t === "Adubo" || t === "Micronutriente";
+const num = (v) => Number(v) || 0;
+const round2 = (v) => Math.round(v * 100) / 100;
 // Quantidade planejada por mês: usa a quantidade informada no cronograma; se não houver, dose/ha × área
 const plannedQty = (s, prod, area) => s?.qty ? Number(s.qty) : (prod?.dosePerHa || 0) * (area || 0);
 // Sacos = quilos ÷ peso da sacaria (arredonda para cima)
@@ -157,11 +159,14 @@ function PieChart({ slices }) {
   );
 }
 
-const StockCard = ({ p, properties, onEdit, onDelete }) => {
+const StockCard = ({ p, properties, applications = [], onEdit, onDelete }) => {
   const ref = isAdubo(p.type) ? (p.bagWeight || 1) : 1;
   const maxM = Math.max(...properties.map(pr => p.dosePerHa * pr.area), 1);
   const mLeft = Math.floor(p.stock / maxM);
-  const pct = Math.min(100, (p.stock / (p.dosePerHa * 100)) * 100);
+  // Barra de consumo: vazia sem aplicações, 100% verde quando o estoque acaba
+  const stockNow = Number(p.stock) || 0;
+  const consumed = applications.filter(a => a.productId === p.id).reduce((s, a) => s + (Number(a.qty) || 0), 0);
+  const pct = stockNow <= 0 ? (consumed > 0 ? 100 : 0) : Math.min(100, (consumed / (consumed + stockNow)) * 100);
   const bar = mLeft < 1 ? COLORS.red : mLeft < 3 ? COLORS.amber : COLORS.greenMid;
   return (
     <Card style={{ marginBottom: 10 }}>
@@ -177,9 +182,12 @@ const StockCard = ({ p, properties, onEdit, onDelete }) => {
         </div>
       </div>
       <div style={{ background: "var(--color-background-secondary)", borderRadius: 4, height: 6 }}>
-        <div style={{ width: pct + "%", background: bar, height: "100%", borderRadius: 4 }} />
+        <div style={{ width: pct + "%", background: COLORS.green, height: "100%", borderRadius: 4, transition: "width 0.3s" }} />
       </div>
       <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "4px 0 0" }}>
+        {"Consumido: " + pct.toFixed(0) + "% (" + Math.round(consumed * 100) / 100 + " " + p.unit + " aplicados)"}
+      </p>
+      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>
         {isAdubo(p.type)
           ? "Sacaria: " + (p.bagWeight || "?") + " kg · R$ " + (p.price || 0).toFixed(2) + "/kg"
           : p.dosePerHa + " " + p.unit + "/ha · R$ " + (p.price || 0).toFixed(2) + "/" + p.unit}
@@ -265,25 +273,42 @@ export default function App() {
 
   if (!currentUser) return <LoginScreen onLogin={handleLogin} error={loginError} />;
 
+  // ── Acesso por propriedade ─────────────────────────────────────
+  // Master vê tudo; Operador/Leitura veem só as propriedades liberadas no cadastro do usuário
+  const isMaster = currentUser.role === "master";
+  const allowedIds = (() => {
+    let pr = currentUser.properties;
+    if (typeof pr === "string" && pr !== "all") { try { pr = JSON.parse(pr); } catch { pr = []; } }
+    return isMaster || pr === "all" ? null : new Set((pr || []).map(String));
+  })();
+  const canSeeProp = (id) => !allowedIds || allowedIds.has(String(id));
+  const vd = allowedIds ? {
+    ...data,
+    properties: data.properties.filter(p => canSeeProp(p.id)),
+    schedules: data.schedules.filter(s => canSeeProp(s.propertyId)),
+    applications: data.applications.filter(a => canSeeProp(a.propertyId)),
+  } : data;
+  const curProp = vd.properties.some(p => p.id === selectedProp) ? selectedProp : vd.properties[0]?.id;
+
   const unread = data.notifications.filter(n => !n.read).length;
-  const markAllRead = () => setData(d => ({ ...d, notifications: d.notifications.map(n => ({ ...n, read: true })) }));
+  const markAllRead = () => { setData(d => ({ ...d, notifications: d.notifications.map(n => ({ ...n, read: true })) })); setNotifOpen(false); };
 
   const appCost = (a) => {
     const prod = data.products.find(p => p.id === a.productId);
     return (prod?.price || 0) * a.qty;
   };
-  const propCost = (propId) => data.applications.filter(a => a.propertyId === propId).reduce((s, a) => s + appCost(a), 0);
+  const propCost = (propId) => vd.applications.filter(a => a.propertyId === propId).reduce((s, a) => s + appCost(a), 0);
 
   // ── Planejado vs Realizado ────────────────────────────────────────
   const appliedQtyForSchedule = (s, monthIdx) => {
-    return data.applications
+    return vd.applications
       .filter(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === monthIdx)
       .reduce((sum, a) => sum + Number(a.qty), 0);
   };
 
   const scheduleCompletionPct = (s, monthIdx) => {
     const prod = data.products.find(p => p.id === s.productId);
-    const prop = data.properties.find(p => p.id === s.propertyId);
+    const prop = vd.properties.find(p => p.id === s.propertyId);
     const planned = plannedQty(s, prod, prop?.area);
     if (planned === 0) return 0;
     const applied = appliedQtyForSchedule(s, monthIdx);
@@ -296,14 +321,25 @@ export default function App() {
       const arr = d[key];
       const idx = arr.findIndex(x => x.id === item.id);
       if (type === "application") {
-        if (idx === -1) return { ...d, applications: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p), notifications: [...d.notifications, { id: Date.now()+1, msg: "Aplicação registrada — estoque atualizado", type: "done", read: false }] };
-        const diff = item.qty - arr[idx].qty;
-        return { ...d, applications: arr.map(x => x.id === item.id ? item : x), products: d.products.map(p => p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - diff) } : p) };
+        if (idx === -1) return { ...d, applications: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: round2(Math.max(0, num(p.stock) - num(item.qty))) } : p), notifications: [...d.notifications, { id: Date.now()+1, msg: "Aplicação registrada — estoque atualizado", type: "done", read: false }] };
+        // Edição: devolve a quantidade antiga ao produto antigo e desconta a nova do produto atual
+        const old = arr[idx];
+        return { ...d, applications: arr.map(x => x.id === item.id ? item : x), products: d.products.map(p => {
+          let st = num(p.stock);
+          if (p.id === old.productId) st += num(old.qty);
+          if (p.id === item.productId) st -= num(item.qty);
+          return (p.id === old.productId || p.id === item.productId) ? { ...p, stock: round2(Math.max(0, st)) } : p;
+        }) };
       }
       if (type === "purchase") {
-        if (idx === -1) return { ...d, purchases: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: p.stock + item.qty } : p) };
-        const diff = item.qty - arr[idx].qty;
-        return { ...d, purchases: arr.map(x => x.id === item.id ? item : x), products: d.products.map(p => p.id === item.productId ? { ...p, stock: p.stock + diff } : p) };
+        if (idx === -1) return { ...d, purchases: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: round2(num(p.stock) + num(item.qty)) } : p) };
+        const old = arr[idx];
+        return { ...d, purchases: arr.map(x => x.id === item.id ? item : x), products: d.products.map(p => {
+          let st = num(p.stock);
+          if (p.id === old.productId) st -= num(old.qty);
+          if (p.id === item.productId) st += num(item.qty);
+          return (p.id === old.productId || p.id === item.productId) ? { ...p, stock: round2(Math.max(0, st)) } : p;
+        }) };
       }
       return { ...d, [key]: idx === -1 ? [...arr, item] : arr.map(x => x.id === item.id ? item : x) };
     });
@@ -313,12 +349,28 @@ export default function App() {
   const del = (type, id) => {
     const key = { application:"applications", purchase:"purchases", product:"products", schedule:"schedules", property:"properties" }[type];
     if (type === "application") {
-      const app = data.applications.find(a => a.id === id);
-      if (app) {
-        setData(d => ({ ...d, applications: d.applications.filter(a => a.id !== id), products: d.products.map(p => p.id === app.productId ? { ...p, stock: p.stock + Number(app.qty) } : p) }));
-        setConfirm(null);
-        return;
-      }
+      // Excluir aplicação: devolve a quantidade ao estoque do produto
+      setData(d => {
+        const app = d.applications.find(a => String(a.id) === String(id));
+        if (!app) return d;
+        return { ...d,
+          applications: d.applications.filter(a => String(a.id) !== String(id)),
+          products: d.products.map(p => String(p.id) === String(app.productId) ? { ...p, stock: round2(num(p.stock) + num(app.qty)) } : p) };
+      });
+      setConfirm(null);
+      return;
+    }
+    if (type === "purchase") {
+      // Excluir compra: retira a quantidade do estoque
+      setData(d => {
+        const pu = d.purchases.find(x => String(x.id) === String(id));
+        if (!pu) return d;
+        return { ...d,
+          purchases: d.purchases.filter(x => String(x.id) !== String(id)),
+          products: d.products.map(p => String(p.id) === String(pu.productId) ? { ...p, stock: round2(Math.max(0, num(p.stock) - num(pu.qty))) } : p) };
+      });
+      setConfirm(null);
+      return;
     }
     setData(d => ({ ...d, [key]: d[key].filter(x => x.id !== id) }));
     setConfirm(null);
@@ -326,9 +378,9 @@ export default function App() {
 
   const exportCSV = () => {
     const rows = [["Data","Propriedade","Produto","Tipo","Área (ha)","Qtd","Unidade","Sacos","Custo (R$)","Obs"]];
-    data.applications.forEach(a => {
+    vd.applications.forEach(a => {
       const prod = data.products.find(p => p.id === a.productId);
-      const pr = data.properties.find(p => p.id === a.propertyId);
+      const pr = vd.properties.find(p => p.id === a.propertyId);
       const sacos = isAdubo(prod?.type) && prod?.bagWeight ? Math.ceil(a.qty / prod.bagWeight) : "";
       rows.push([a.date, pr?.name, prod?.name, prod?.type, a.areaApplied, a.qty, prod?.unit, sacos, appCost(a).toFixed(2), a.notes]);
     });
@@ -338,10 +390,10 @@ export default function App() {
 
   const exportTxt = () => {
     let txt = "RELATÓRIO AGROGESTÃO CAFÉ\n" + "=".repeat(40) + "\n\n";
-    data.properties.forEach(p => {
+    vd.properties.forEach(p => {
       txt += "PROPRIEDADE: " + p.name + " — " + p.area + " ha\n";
       let total = 0;
-      data.applications.filter(a => a.propertyId === p.id).forEach(a => {
+      vd.applications.filter(a => a.propertyId === p.id).forEach(a => {
         const prod = data.products.find(pr => pr.id === a.productId);
         const c = appCost(a); total += c;
         const sacos = isAdubo(prod?.type) && prod?.bagWeight ? " | Sacos: " + Math.ceil(a.qty / prod.bagWeight) : "";
@@ -362,7 +414,7 @@ export default function App() {
     { id: "users",     icon: "👥", label: "Usuários", masterOnly: true },
   ];
 
-  const propSel = data.properties.find(p => p.id === selectedProp);
+  const propSel = vd.properties.find(p => p.id === curProp);
 
   return (
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
@@ -400,17 +452,17 @@ export default function App() {
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Visão geral</p>
-              <button onClick={() => setModal({ type: "property", item: {} })} style={{ fontSize: 13, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer" }}>+ Lavoura</button>
+              {isMaster && <button onClick={() => setModal({ type: "property", item: {} })} style={{ fontSize: 13, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer" }}>+ Lavoura</button>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-              <MetricCard label="Propriedades" value={data.properties.length} sub="cadastradas" />
+              <MetricCard label="Propriedades" value={vd.properties.length} sub="cadastradas" />
               <MetricCard label="Produtos" value={data.products.length} sub="no portfólio" />
-              <MetricCard label="Aplicações" value={data.applications.length} sub="registradas" />
+              <MetricCard label="Aplicações" value={vd.applications.length} sub="registradas" />
               <MetricCard label="Est. crítico" value={data.products.filter(p => p.stock < p.dosePerHa * 20).length} sub="produtos" color={COLORS.red} />
             </div>
 
-            <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>Propriedades cadastradas</p>
-            {data.properties.map(p => (
+            <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{isMaster ? "Propriedades cadastradas" : "Sua propriedade"}</p>
+            {vd.properties.map(p => (
               <Card key={p.id} style={{ marginBottom: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -420,10 +472,10 @@ export default function App() {
                       <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: 0 }}>{p.location + " · " + p.area + " ha"}</p>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6 }}>
+                  {isMaster && <div style={{ display: "flex", gap: 6 }}>
                     <button onClick={() => setModal({ type: "property", item: { ...p } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
                     <button onClick={() => setConfirm({ type: "property", id: p.id, label: p.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
-                  </div>
+                  </div>}
                 </div>
               </Card>
             ))}
@@ -432,11 +484,11 @@ export default function App() {
             {(() => {
               const curMonth = new Date().getMonth();
               const cur = curMonth + 1;
-              const items = data.schedules.filter(s => s.months.includes(cur));
+              const items = vd.schedules.filter(s => s.months.includes(cur));
               if (!items.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação este mês.</p>;
               return items.map(s => {
                 const prod = data.products.find(p => p.id === s.productId);
-                const pr = data.properties.find(p => p.id === s.propertyId);
+                const pr = vd.properties.find(p => p.id === s.propertyId);
                 const semEstoque = (prod?.stock || 0) <= 0;
                 const pct = scheduleCompletionPct(s, curMonth);
                 const planned = plannedQty(s, prod, pr?.area);
@@ -499,25 +551,25 @@ export default function App() {
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Cronograma</p>
               <button onClick={() => setModal({ type: "schedule", item: {} })} style={{ fontSize: 13, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer" }}>+ Programar</button>
             </div>
-            <select value={selectedProp} onChange={e => setSelectedProp(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
-              {data.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <select value={curProp} onChange={e => setSelectedProp(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
+              {vd.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <select value={calMonthIdx} onChange={e => setCalMonthIdx(Number(e.target.value))} style={{ width: "100%", marginBottom: 16, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               {SCHED_MONTHS.map((m, i) => {
-                const has = data.schedules.some(s => s.propertyId === selectedProp && s.months.includes(m.month + 1));
+                const has = vd.schedules.some(s => s.propertyId === curProp && s.months.includes(m.month + 1));
                 return <option key={m.label} value={i}>{m.label + (has ? " •" : "")}</option>;
               })}
             </select>
             <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{"Aplicações em " + SCHED_MONTHS[calMonthIdx].label}</p>
             {(() => {
               const area = propSel?.area || 1;
-              const items = data.schedules.filter(s => s.propertyId === selectedProp && s.months.includes(SCHED_MONTHS[calMonthIdx].month + 1));
+              const items = vd.schedules.filter(s => s.propertyId === curProp && s.months.includes(SCHED_MONTHS[calMonthIdx].month + 1));
               if (!items.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação neste mês.</p>;
               return items.map(s => {
                 const prod = data.products.find(p => p.id === s.productId);
                 const totalQty = plannedQty(s, prod, area).toFixed(1);
                 const sacos = sacosFor(prod, totalQty);
-                const done = data.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === SCHED_MONTHS[calMonthIdx].month && new Date(a.date).getFullYear() === SCHED_MONTHS[calMonthIdx].year);
+                const done = vd.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === SCHED_MONTHS[calMonthIdx].month && new Date(a.date).getFullYear() === SCHED_MONTHS[calMonthIdx].year);
                 const semEstoque = (prod?.stock || 0) <= 0;
                 return (
                   <Card key={s.id} style={{ marginBottom: 8 }}>
@@ -555,7 +607,7 @@ export default function App() {
             </div>
             <select value={appPropFilter} onChange={e => setAppPropFilter(Number(e.target.value))} style={{ width: "100%", marginBottom: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               <option value={0}>Todas as propriedades</option>
-              {data.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {vd.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <select value={appMonthIdx} onChange={e => setAppMonthIdx(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               {APP_MONTHS.map((m, i) => <option key={i} value={i}>{m.label}</option>)}
@@ -564,7 +616,7 @@ export default function App() {
             {(() => {
               const selMonth = APP_MONTHS[appMonthIdx];
               const fn = appFilter === "defensivo" ? isDefensivo : isAdubo;
-              const apps = data.applications.filter(a => {
+              const apps = vd.applications.filter(a => {
                 const prod = data.products.find(p => p.id === a.productId);
                 const d = new Date(a.date);
                 return fn(prod?.type) && (appPropFilter === 0 || a.propertyId === appPropFilter) && d.getMonth() === selMonth.month && d.getFullYear() === selMonth.year;
@@ -572,7 +624,7 @@ export default function App() {
               if (!apps.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação em {selMonth.label}.</p>;
               return apps.map(a => {
                 const prod = data.products.find(p => p.id === a.productId);
-                const pr = data.properties.find(p => p.id === a.propertyId);
+                const pr = vd.properties.find(p => p.id === a.propertyId);
                 const sacaria = isAdubo(prod?.type) && prod?.bagWeight ? Math.ceil(Number(a.qty) / prod.bagWeight) : null;
                 return (
                   <Card key={a.id} style={{ marginBottom: 8 }}>
@@ -612,7 +664,7 @@ export default function App() {
             </div>
             <PillTabs tabs={[{ id: "defensivo", label: "💊 Defensivos" }, { id: "adubo", label: "🌾 Adubos" }]} value={stockFilter} onChange={setStockFilter} />
             {data.products.filter(p => stockFilter === "defensivo" ? isDefensivo(p.type) : isAdubo(p.type)).map(p => (
-              <StockCard key={p.id} p={p} properties={data.properties}
+              <StockCard key={p.id} p={p} properties={vd.properties} applications={data.applications}
                 onEdit={() => setModal({ type: "product", item: { ...p } })}
                 onDelete={() => setConfirm({ type: "product", id: p.id, label: p.name })} />
             ))}
@@ -658,7 +710,7 @@ export default function App() {
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-              <MetricCard label="Total em aplicações" value={"R$ " + data.applications.reduce((s,a) => s + appCost(a), 0).toLocaleString("pt-BR", { minimumFractionDigits: 0 })} />
+              <MetricCard label="Total em aplicações" value={"R$ " + vd.applications.reduce((s,a) => s + appCost(a), 0).toLocaleString("pt-BR", { minimumFractionDigits: 0 })} />
               <MetricCard label="Total em compras" value={"R$ " + data.purchases.reduce((s,p) => s + (p.totalCost || 0), 0).toLocaleString("pt-BR", { minimumFractionDigits: 0 })} />
             </div>
 
@@ -667,19 +719,19 @@ export default function App() {
               <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 12px" }}>📋 Planejado vs Realizado por mês</p>
               <div style={{ marginBottom: 12 }}>
                 <label style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Propriedade</label>
-                <select value={selectedProp} onChange={e => setSelectedProp(Number(e.target.value))} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
-                  {data.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                <select value={curProp} onChange={e => setSelectedProp(Number(e.target.value))} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
+                  {vd.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               {MONTHS.map((mLabel, mIdx) => {
-                const schedsThisMonth = data.schedules.filter(s => s.propertyId === selectedProp && s.months.includes(mIdx + 1));
+                const schedsThisMonth = vd.schedules.filter(s => s.propertyId === curProp && s.months.includes(mIdx + 1));
                 if (!schedsThisMonth.length) return null;
                 return (
                   <div key={mIdx} style={{ marginBottom: 14 }}>
                     <p style={{ fontWeight: 500, fontSize: 13, margin: "0 0 8px", borderBottom: "0.5px solid var(--color-border-tertiary)", paddingBottom: 4 }}>{mLabel}</p>
                     {schedsThisMonth.map(s => {
                       const prod = data.products.find(p => p.id === s.productId);
-                      const prop = data.properties.find(p => p.id === s.propertyId);
+                      const prop = vd.properties.find(p => p.id === s.propertyId);
                       const planned = plannedQty(s, prod, prop?.area);
                       const applied = appliedQtyForSchedule(s, mIdx);
                       const pct = planned > 0 ? Math.min(100, (applied / planned) * 100) : 0;
@@ -707,16 +759,16 @@ export default function App() {
                   </div>
                 );
               })}
-              {data.schedules.filter(s => s.propertyId === selectedProp).length === 0 && (
+              {vd.schedules.filter(s => s.propertyId === curProp).length === 0 && (
                 <p style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Nenhum agendamento para esta propriedade.</p>
               )}
             </Card>
 
             <Card style={{ marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px" }}>Custo por propriedade</p>
-              {data.properties.map(p => {
+              {vd.properties.map(p => {
                 const cost = propCost(p.id);
-                const total = data.applications.reduce((s,a) => s + appCost(a), 0);
+                const total = vd.applications.reduce((s,a) => s + appCost(a), 0);
                 const pct = total > 0 ? (cost / total * 100).toFixed(0) : 0;
                 return (
                   <div key={p.id} style={{ marginBottom: 10 }}>
@@ -733,21 +785,21 @@ export default function App() {
             </Card>
             <Card style={{ marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px" }}>Custo por produto</p>
-              <PieChart slices={data.products.map((p, i) => ({ label: p.name, value: data.applications.filter(a => a.productId === p.id).reduce((s,a) => s + appCost(a), 0), color: [COLORS.greenMid, COLORS.blue, "#D4537E", COLORS.amber, COLORS.teal][i % 5] })).filter(s => s.value > 0)} />
+              <PieChart slices={data.products.map((p, i) => ({ label: p.name, value: vd.applications.filter(a => a.productId === p.id).reduce((s,a) => s + appCost(a), 0), color: [COLORS.greenMid, COLORS.blue, "#D4537E", COLORS.amber, COLORS.teal][i % 5] })).filter(s => s.value > 0)} />
             </Card>
             <Card style={{ marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px" }}>Aplicações por mês</p>
-              <BarChart data={MONTHS.map((m, i) => ({ label: m, value: data.applications.filter(a => new Date(a.date).getMonth() === i).length }))} color={COLORS.greenMid} />
+              <BarChart data={MONTHS.map((m, i) => ({ label: m, value: vd.applications.filter(a => new Date(a.date).getMonth() === i).length }))} color={COLORS.greenMid} />
             </Card>
             <Card style={{ marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px" }}>Custo mensal (R$)</p>
-              <BarChart data={MONTHS.map((m, i) => ({ label: m, value: data.applications.filter(a => new Date(a.date).getMonth() === i).reduce((s,a) => s + appCost(a), 0) }))} color={COLORS.teal} />
+              <BarChart data={MONTHS.map((m, i) => ({ label: m, value: vd.applications.filter(a => new Date(a.date).getMonth() === i).reduce((s,a) => s + appCost(a), 0) }))} color={COLORS.teal} />
             </Card>
           </div>
         )}
       </div>
 
-      {modal && <FormModal modal={modal} data={data} onClose={() => setModal(null)} onSave={save} />}
+      {modal && <FormModal modal={modal} data={vd} onClose={() => setModal(null)} onSave={save} />}
 
       {confirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
