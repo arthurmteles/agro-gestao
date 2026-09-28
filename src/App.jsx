@@ -16,6 +16,10 @@ const MONTHS = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov
 const PRODUCT_TYPES = ["Adubo","Defensivo Fungicida","Defensivo Inseticida","Defensivo Herbicida","Micronutriente"];
 const isDefensivo = (t) => t?.startsWith("Defensivo");
 const isAdubo = (t) => t === "Adubo" || t === "Micronutriente";
+// Quantidade planejada por mês: usa a quantidade informada no cronograma; se não houver, dose/ha × área
+const plannedQty = (s, prod, area) => s?.qty ? Number(s.qty) : (prod?.dosePerHa || 0) * (area || 0);
+// Sacos = quilos ÷ peso da sacaria (arredonda para cima)
+const sacosFor = (prod, qty) => isAdubo(prod?.type) && prod?.bagWeight && qty ? Math.ceil(Number(qty) / prod.bagWeight) : null;
 
 // ── Período Jul/2026 a Jul/2027 ───────────────────────────────────
 const APP_MONTHS = [
@@ -278,7 +282,7 @@ export default function App() {
   const scheduleCompletionPct = (s, monthIdx) => {
     const prod = data.products.find(p => p.id === s.productId);
     const prop = data.properties.find(p => p.id === s.propertyId);
-    const planned = (prod?.dosePerHa || 0) * (prop?.area || 0);
+    const planned = plannedQty(s, prod, prop?.area);
     if (planned === 0) return 0;
     const applied = appliedQtyForSchedule(s, monthIdx);
     return Math.min(100, (applied / planned) * 100);
@@ -433,7 +437,7 @@ export default function App() {
                 const pr = data.properties.find(p => p.id === s.propertyId);
                 const semEstoque = (prod?.stock || 0) <= 0;
                 const pct = scheduleCompletionPct(s, curMonth);
-                const planned = (prod?.dosePerHa || 0) * (pr?.area || 0);
+                const planned = plannedQty(s, prod, pr?.area);
                 const applied = appliedQtyForSchedule(s, curMonth);
                 const done = pct >= 100;
                 const barColor = pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : COLORS.grayLight;
@@ -509,7 +513,8 @@ export default function App() {
               if (!items.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação neste mês.</p>;
               return items.map(s => {
                 const prod = data.products.find(p => p.id === s.productId);
-                const totalQty = ((prod?.dosePerHa || 0) * area).toFixed(1);
+                const totalQty = plannedQty(s, prod, area).toFixed(1);
+                const sacos = sacosFor(prod, totalQty);
                 const done = data.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === APP_MONTHS[calMonthIdx].month && new Date(a.date).getFullYear() === APP_MONTHS[calMonthIdx].year);
                 const semEstoque = (prod?.stock || 0) <= 0;
                 return (
@@ -518,7 +523,7 @@ export default function App() {
                       <div style={{ flex: 1 }}>
                         <p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{prod?.name}</p>
                         <Badge label={prod?.type} type={prod?.type} />
-                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "6px 0 0" }}>{"Dose: " + prod?.dosePerHa + " " + prod?.unit + "/ha · Total: " + totalQty + " " + prod?.unit}</p>
+                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "6px 0 0" }}>{(s.qty ? "Qtd/mês: " : "Dose: " + prod?.dosePerHa + " " + prod?.unit + "/ha · Total: ") + totalQty + " " + prod?.unit + (sacos !== null ? " · Sacos: " + sacos : "")}</p>
                         <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>{s.notes}</p>
                         {!done && <p style={{ fontSize: 12, color: semEstoque ? COLORS.red : COLORS.teal, margin: "4px 0 0", fontWeight: 500 }}>{"Estoque: " + (prod?.stock || 0) + " " + prod?.unit + (semEstoque ? " ⚠️" : "")}</p>}
                       </div>
@@ -673,7 +678,7 @@ export default function App() {
                     {schedsThisMonth.map(s => {
                       const prod = data.products.find(p => p.id === s.productId);
                       const prop = data.properties.find(p => p.id === s.propertyId);
-                      const planned = (prod?.dosePerHa || 0) * (prop?.area || 0);
+                      const planned = plannedQty(s, prod, prop?.area);
                       const applied = appliedQtyForSchedule(s, mIdx);
                       const pct = planned > 0 ? Math.min(100, (applied / planned) * 100) : 0;
                       const barColor = pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : COLORS.red;
@@ -799,7 +804,7 @@ function FormModal({ modal, data, onClose, onSave }) {
     } else if (modal.type === "product") {
       onSave("product", { ...base, dosePerHa: Number(form.dosePerHa) || 0, price: Number(form.price), bagWeight: form.bagWeight ? Number(form.bagWeight) : null });
     } else if (modal.type === "schedule") {
-      onSave("schedule", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), months });
+      onSave("schedule", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), qty: form.qty ? Number(form.qty) : null, months });
     } else if (modal.type === "property") {
       onSave("property", { ...base, area: Number(form.area) });
     }
@@ -881,6 +886,16 @@ function FormModal({ modal, data, onClose, onSave }) {
       <div>
         {sel("Produto", "productId", data.products.map(p => ({ value: p.id, label: p.name })))}
         {sel("Propriedade", "propertyId", data.properties.map(p => ({ value: p.id, label: p.name })))}
+        {(() => {
+          const pr = data.products.find(p => p.id === Number(form.productId));
+          const sc = sacosFor(pr, form.qty);
+          return (
+            <div>
+              {inp("Quantidade por mês (" + (pr ? pr.unit : "unid") + ")", "qty", "number", "Ex: 5400", pr ? pr.unit : "")}
+              {sc !== null && <p style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", margin: "-8px 0 14px" }}>{"= " + sc + " sacos de " + pr.bagWeight + " kg por mês"}</p>}
+            </div>
+          );
+        })()}
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 13, color: "#fff", fontWeight: 700, display: "block", marginBottom: 6 }}>Meses de aplicação</label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
