@@ -17,6 +17,23 @@ const PRODUCT_TYPES = ["Adubo","Defensivo Fungicida","Defensivo Inseticida","Def
 const isDefensivo = (t) => t?.startsWith("Defensivo");
 const isAdubo = (t) => t === "Adubo" || t === "Micronutriente";
 
+// ── Período Jul/2026 a Jul/2027 ───────────────────────────────────
+const APP_MONTHS = [
+  { label: "Jul/2026", month: 6, year: 2026 },
+  { label: "Ago/2026", month: 7, year: 2026 },
+  { label: "Set/2026", month: 8, year: 2026 },
+  { label: "Out/2026", month: 9, year: 2026 },
+  { label: "Nov/2026", month: 10, year: 2026 },
+  { label: "Dez/2026", month: 11, year: 2026 },
+  { label: "Jan/2027", month: 0, year: 2027 },
+  { label: "Fev/2027", month: 1, year: 2027 },
+  { label: "Mar/2027", month: 2, year: 2027 },
+  { label: "Abr/2027", month: 3, year: 2027 },
+  { label: "Mai/2027", month: 4, year: 2027 },
+  { label: "Jun/2027", month: 5, year: 2027 },
+  { label: "Jul/2027", month: 6, year: 2027 },
+];
+
 const typeColor = (t) => {
   if (t === "Adubo") return { bg: COLORS.greenLight, text: COLORS.green };
   if (t?.includes("Fungicida")) return { bg: COLORS.blueLight, text: COLORS.blue };
@@ -62,7 +79,7 @@ const initData = {
     { id: 2, name: "Sítio Boa Esperança", area: 18, location: "Ji-Paraná - RO" },
   ],
   products: [
-    { id: 1, name: "NPK 20-05-20", type: "Adubo", unit: "kg", dosePerHa: 120, stock: 3200, price: 4.5 },
+    { id: 1, name: "NPK 20-05-20", type: "Adubo", unit: "kg", dosePerHa: 120, bagWeight: 50, stock: 3200, price: 4.5 },
     { id: 2, name: "Azoxistrobina", type: "Defensivo Fungicida", unit: "L", dosePerHa: 0.8, stock: 45, price: 85 },
     { id: 3, name: "Imidacloprido", type: "Defensivo Inseticida", unit: "L", dosePerHa: 0.5, stock: 20, price: 120 },
     { id: 4, name: "Boro Foliar", type: "Micronutriente", unit: "L", dosePerHa: 1.5, stock: 60, price: 35 },
@@ -74,18 +91,18 @@ const initData = {
     { id: 4, productId: 4, propertyId: 1, months: [1,6,11], notes: "Nutrição foliar" },
   ],
   applications: [
-    { id: 1, productId: 1, propertyId: 1, date: "2025-01-15", areaApplied: 45, qty: 5400, notes: "Concluída" },
-    { id: 2, productId: 4, propertyId: 1, date: "2025-01-20", areaApplied: 45, qty: 67.5, notes: "Concluída" },
-    { id: 3, productId: 2, propertyId: 1, date: "2025-02-10", areaApplied: 45, qty: 36, notes: "Concluída" },
-    { id: 4, productId: 3, propertyId: 2, date: "2025-03-05", areaApplied: 18, qty: 9, notes: "Concluída" },
+    { id: 1, productId: 1, propertyId: 1, date: "2026-07-15", areaApplied: 45, qty: 5400, notes: "Concluída" },
+    { id: 2, productId: 4, propertyId: 1, date: "2026-07-20", areaApplied: 45, qty: 67.5, notes: "Concluída" },
+    { id: 3, productId: 2, propertyId: 1, date: "2026-08-10", areaApplied: 45, qty: 36, notes: "Concluída" },
+    { id: 4, productId: 3, propertyId: 2, date: "2026-09-05", areaApplied: 18, qty: 9, notes: "Concluída" },
   ],
   purchases: [
-    { id: 1, productId: 1, date: "2025-01-05", qty: 5000, totalCost: 22500 },
-    { id: 2, productId: 2, date: "2025-01-10", qty: 50, totalCost: 4250 },
-    { id: 3, productId: 3, date: "2025-02-15", qty: 30, totalCost: 3600 },
+    { id: 1, productId: 1, date: "2026-07-05", qty: 5000, totalCost: 22500 },
+    { id: 2, productId: 2, date: "2026-07-10", qty: 50, totalCost: 4250 },
+    { id: 3, productId: 3, date: "2026-08-15", qty: 30, totalCost: 3600 },
   ],
   notifications: [
-    { id: 1, msg: "NPK 20-05-20 programado para Abr em Santa Rosa", type: "schedule", read: false },
+    { id: 1, msg: "NPK 20-05-20 programado para Out em Santa Rosa", type: "schedule", read: false },
     { id: 2, msg: "Estoque de Imidacloprido abaixo de 25 unidades", type: "stock", read: false },
   ],
 };
@@ -135,6 +152,7 @@ function PieChart({ slices }) {
 }
 
 const StockCard = ({ p, properties, onEdit, onDelete }) => {
+  const ref = isAdubo(p.type) ? (p.bagWeight || 1) : 1;
   const maxM = Math.max(...properties.map(pr => p.dosePerHa * pr.area), 1);
   const mLeft = Math.floor(p.stock / maxM);
   const pct = Math.min(100, (p.stock / (p.dosePerHa * 100)) * 100);
@@ -155,31 +173,11 @@ const StockCard = ({ p, properties, onEdit, onDelete }) => {
       <div style={{ background: "var(--color-background-secondary)", borderRadius: 4, height: 6 }}>
         <div style={{ width: pct + "%", background: bar, height: "100%", borderRadius: 4 }} />
       </div>
-      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "4px 0 0" }}>{p.dosePerHa + " " + p.unit + "/ha · R$ " + (p.price || 0).toFixed(2) + "/" + p.unit}</p>
-    </Card>
-  );
-};
-
-const AppCard = ({ a, products, properties, onEdit, onDelete, appCost }) => {
-  const prod = products.find(p => p.id === a.productId);
-  const pr = properties.find(p => p.id === a.propertyId);
-  return (
-    <Card style={{ marginBottom: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <div style={{ flex: 1 }}>
-          <p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 14 }}>{prod?.name}</p>
-          <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "0 0 4px" }}>{(pr?.name || "") + " · " + a.date}</p>
-          <Badge label={prod?.type} type={prod?.type} />
-          <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "6px 0 0" }}>
-            {a.qty + " " + (prod?.unit || "") + " em " + a.areaApplied + " ha · "}<span style={{ color: COLORS.teal, fontWeight: 500 }}>{"R$ " + appCost(a).toFixed(2)}</span>
-          </p>
-          {a.notes && <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>{a.notes}</p>}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <button onClick={onEdit} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
-          <button onClick={onDelete} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
-        </div>
-      </div>
+      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "4px 0 0" }}>
+        {isAdubo(p.type)
+          ? "Sacaria: " + (p.bagWeight || "?") + " kg · R$ " + (p.price || 0).toFixed(2) + "/kg"
+          : p.dosePerHa + " " + p.unit + "/ha · R$ " + (p.price || 0).toFixed(2) + "/" + p.unit}
+      </p>
     </Card>
   );
 };
@@ -196,31 +194,42 @@ export default function App() {
   const [stockFilter, setStockFilter] = useState("defensivo");
   const [appFilter, setAppFilter] = useState("defensivo");
   const [appPropFilter, setAppPropFilter] = useState(0);
+  const [appMonthIdx, setAppMonthIdx] = useState(0);
+  const [calMonthIdx, setCalMonthIdx] = useState(() => {
+    const n = new Date();
+    const i = APP_MONTHS.findIndex(m => m.month === n.getMonth() && m.year === n.getFullYear());
+    return i < 0 ? 0 : i;
+  });
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [purchaseTypeFilter, setPurchaseTypeFilter] = useState("");
 
   // Auth
   const [users, setUsers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [loginError, setLoginError] = useState("");
 
-  // Carrega dados e usuários
   useEffect(() => {
     const load = async () => {
-      const [saved, savedUsers] = await Promise.all([loadData(), loadUsers()]);
-      if (saved) setData(saved);
-      setUsers(savedUsers || DEFAULT_USERS.map(u => ({ ...u, password: hashPassword(u.password) })));
+      try {
+        const [saved, savedUsers] = await Promise.all([loadData(), loadUsers()]);
+        if (saved) setData(saved);
+        setUsers(savedUsers || DEFAULT_USERS.map(u => ({ ...u, password: hashPassword(u.password) })));
+      } catch (err) {
+        // Proteção: se não conseguiu ler o Firebase, NÃO grava nada por cima
+        console.error("Erro ao carregar dados:", err);
+        setLoadFailed(true);
+      }
       setLoading(false);
     };
     load();
   }, []);
 
-  // Salva dados
   useEffect(() => {
-    if (!loading && currentUser) saveData(data);
+    if (!loading && !loadFailed && currentUser) saveData(data);
   }, [data]);
 
-  // Salva usuários
   useEffect(() => {
-    if (!loading && users.length > 0) saveUsers(users);
+    if (!loading && !loadFailed && users.length > 0) saveUsers(users);
   }, [users]);
 
   const handleLogin = (username, password) => {
@@ -231,8 +240,15 @@ export default function App() {
 
   const handleLogout = () => { setCurrentUser(null); setTab("dashboard"); };
 
-  // Propriedades filtradas pelo usuário logado
   const visibleProperties = currentUser ? filterPropertiesByUser(data.properties, currentUser) : [];
+
+  if (loadFailed) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 24, textAlign: "center", gap: 12 }}>
+      <p style={{ fontSize: 16, fontWeight: 500 }}>Não foi possível carregar os dados.</p>
+      <p style={{ fontSize: 14, opacity: 0.7 }}>Verifique a internet e tente de novo. Nenhum dado foi alterado.</p>
+      <button onClick={() => window.location.reload()} style={{ fontSize: 14, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "8px 18px", cursor: "pointer" }}>Tentar novamente</button>
+    </div>
+  );
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "sans-serif", color: "#3B6D11", flexDirection: "column", gap: 12 }}>
@@ -242,7 +258,7 @@ export default function App() {
   );
 
   if (!currentUser) return <LoginScreen onLogin={handleLogin} error={loginError} />;
-  
+
   const unread = data.notifications.filter(n => !n.read).length;
   const markAllRead = () => setData(d => ({ ...d, notifications: d.notifications.map(n => ({ ...n, read: true })) }));
 
@@ -252,7 +268,7 @@ export default function App() {
   };
   const propCost = (propId) => data.applications.filter(a => a.propertyId === propId).reduce((s, a) => s + appCost(a), 0);
 
-// ── Planejado vs Realizado ────────────────────────────────────────
+  // ── Planejado vs Realizado ────────────────────────────────────────
   const appliedQtyForSchedule = (s, monthIdx) => {
     return data.applications
       .filter(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === monthIdx)
@@ -274,7 +290,7 @@ export default function App() {
       const arr = d[key];
       const idx = arr.findIndex(x => x.id === item.id);
       if (type === "application") {
-        if (idx === -1) return { ...d, applications: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p), notifications: [...d.notifications, { id: Date.now()+1, msg: "Aplicação registrada", type: "done", read: false }] };
+        if (idx === -1) return { ...d, applications: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p), notifications: [...d.notifications, { id: Date.now()+1, msg: "Aplicação registrada — estoque atualizado", type: "done", read: false }] };
         const diff = item.qty - arr[idx].qty;
         return { ...d, applications: arr.map(x => x.id === item.id ? item : x), products: d.products.map(p => p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - diff) } : p) };
       }
@@ -290,18 +306,27 @@ export default function App() {
 
   const del = (type, id) => {
     const key = { application:"applications", purchase:"purchases", product:"products", schedule:"schedules", property:"properties" }[type];
+    if (type === "application") {
+      const app = data.applications.find(a => a.id === id);
+      if (app) {
+        setData(d => ({ ...d, applications: d.applications.filter(a => a.id !== id), products: d.products.map(p => p.id === app.productId ? { ...p, stock: p.stock + Number(app.qty) } : p) }));
+        setConfirm(null);
+        return;
+      }
+    }
     setData(d => ({ ...d, [key]: d[key].filter(x => x.id !== id) }));
     setConfirm(null);
   };
 
   const exportCSV = () => {
-    const rows = [["Data","Propriedade","Produto","Tipo","Área (ha)","Qtd","Unidade","Custo (R$)","Obs"]];
+    const rows = [["Data","Propriedade","Produto","Tipo","Área (ha)","Qtd","Unidade","Sacos","Custo (R$)","Obs"]];
     data.applications.forEach(a => {
       const prod = data.products.find(p => p.id === a.productId);
       const pr = data.properties.find(p => p.id === a.propertyId);
-      rows.push([a.date, pr?.name, prod?.name, prod?.type, a.areaApplied, a.qty, prod?.unit, appCost(a).toFixed(2), a.notes]);
+      const sacos = isAdubo(prod?.type) && prod?.bagWeight ? Math.ceil(a.qty / prod.bagWeight) : "";
+      rows.push([a.date, pr?.name, prod?.name, prod?.type, a.areaApplied, a.qty, prod?.unit, sacos, appCost(a).toFixed(2), a.notes]);
     });
-    const blob = new Blob(["\uFEFF" + rows.map(r => r.join(";")).join("\n")], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob(["﻿" + rows.map(r => r.join(";")).join("\n")], { type: "text/csv;charset=utf-8;" });
     const el = document.createElement("a"); el.href = URL.createObjectURL(blob); el.download = "agro_gestao.csv"; el.click();
   };
 
@@ -313,7 +338,8 @@ export default function App() {
       data.applications.filter(a => a.propertyId === p.id).forEach(a => {
         const prod = data.products.find(pr => pr.id === a.productId);
         const c = appCost(a); total += c;
-        txt += "  " + a.date + " | " + prod?.name + " | " + a.qty + " " + prod?.unit + " | R$ " + c.toFixed(2) + "\n";
+        const sacos = isAdubo(prod?.type) && prod?.bagWeight ? " | Sacos: " + Math.ceil(a.qty / prod.bagWeight) : "";
+        txt += "  " + a.date + " | " + prod?.name + " | " + a.qty + " " + prod?.unit + sacos + " | R$ " + c.toFixed(2) + "\n";
       });
       txt += "  TOTAL: R$ " + total.toFixed(2) + "\n\n";
     });
@@ -321,39 +347,31 @@ export default function App() {
     const el = document.createElement("a"); el.href = URL.createObjectURL(blob); el.download = "relatorio_agro.txt"; el.click();
   };
 
-const navItems = [
-  { id: "dashboard", icon: "📊", label: "Início" },
-  { id: "calendar",  icon: "📅", label: "Cronograma" },
-  { id: "apply",     icon: "💧", label: "Aplicações" },
-  { id: "stock",     icon: "📦", label: "Estoque" },
-  { id: "reports",   icon: "📈", label: "Relatórios", restricted: true },
-  { id: "users",     icon: "👥", label: "Usuários", masterOnly: true },
-];
-
-  const filteredApps = (filter) => {
-    const fn = filter === "defensivo" ? isDefensivo : isAdubo;
-    return data.applications.filter(a => {
-      const prod = data.products.find(p => p.id === a.productId);
-      return fn(prod?.type) && (appPropFilter === 0 || a.propertyId === appPropFilter);
-    }).sort((a, b) => b.date.localeCompare(a.date));
-  };
+  const navItems = [
+    { id: "dashboard", icon: "📊", label: "Início" },
+    { id: "calendar",  icon: "📅", label: "Cronograma" },
+    { id: "apply",     icon: "💧", label: "Aplicações" },
+    { id: "stock",     icon: "📦", label: "Estoque" },
+    { id: "reports",   icon: "📈", label: "Relatórios", restricted: true },
+    { id: "users",     icon: "👥", label: "Usuários", masterOnly: true },
+  ];
 
   const propSel = data.properties.find(p => p.id === selectedProp);
 
   return (
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
-    <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-      <div>
-        <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão</div>
-        <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
+      <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.1</span></div>
+          <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setNotifOpen(!notifOpen)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 12px", color: "#fff", cursor: "pointer", fontSize: 14, position: "relative" }}>
+            🔔{unread > 0 && <span style={{ background: COLORS.red, color: "#fff", borderRadius: 10, fontSize: 10, padding: "1px 5px", position: "absolute", top: 2, right: 2 }}>{unread}</span>}
+          </button>
+          <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 12px", color: "#fff", cursor: "pointer", fontSize: 13 }}>Sair</button>
+        </div>
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
-       <button onClick={() => setNotifOpen(!notifOpen)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 12px", color: "#fff", cursor: "pointer", fontSize: 14, position: "relative" }}>
-      🔔{unread > 0 && <span style={{ background: COLORS.red, color: "#fff", borderRadius: 10, fontSize: 10, padding: "1px 5px", position: "absolute", top: 2, right: 2 }}>{unread}</span>}
-       </button>
-       <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 12px", color: "#fff", cursor: "pointer", fontSize: 13 }}>Sair</button>
-     </div>
-    </div>
 
       {notifOpen && (
         <Card style={{ borderRadius: 0, borderLeft: "none", borderRight: "none" }}>
@@ -452,9 +470,14 @@ const navItems = [
 
             <p style={{ fontWeight: 500, fontSize: 14, margin: "20px 0 8px" }}>Estoque crítico</p>
             {data.products.filter(p => p.stock < p.dosePerHa * 20).map(p => (
-              <Card key={p.id} style={{ marginBottom: 8, borderLeft: "3px solid " + COLORS.red, borderRadius: "0 12px 12px 0" }}>
+              <Card key={p.id} style={{ marginBottom: 8, borderLeft: "3px solid " + (p.stock <= 0 ? COLORS.red : COLORS.amber), borderRadius: "0 12px 12px 0" }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <div><p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 14 }}>{p.name}</p><p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: 0 }}>{p.stock + " " + p.unit + " em estoque"}</p></div>
+                  <div>
+                    <p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 14 }}>{p.name}</p>
+                    <p style={{ fontSize: 12, color: p.stock <= 0 ? COLORS.red : "var(--color-text-secondary)", margin: 0, fontWeight: p.stock <= 0 ? 600 : 400 }}>
+                      {p.stock <= 0 ? "⚠️ Sem estoque" : p.stock + " " + p.unit + " em estoque"}
+                    </p>
+                  </div>
                   <Badge label={p.type} type={p.type} />
                 </div>
               </Card>
@@ -473,26 +496,22 @@ const navItems = [
             <select value={selectedProp} onChange={e => setSelectedProp(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               {data.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, marginBottom: 16 }}>
-              {MONTHS.map((m, i) => {
-                const has = data.schedules.some(s => s.propertyId === selectedProp && s.months.includes(i + 1));
-                const sel = selectedMonth === i;
-                return (
-                  <button key={m} onClick={() => setSelectedMonth(i)} style={{ padding: "8px 4px", borderRadius: 8, border: "0.5px solid " + (sel ? COLORS.green : "var(--color-border-tertiary)"), background: sel ? COLORS.greenLight : "var(--color-background-primary)", color: sel ? COLORS.green : "var(--color-text-primary)", fontSize: 12, fontWeight: sel ? 500 : 400, cursor: "pointer", position: "relative" }}>
-                    {m}{has && <span style={{ width: 5, height: 5, background: COLORS.greenMid, borderRadius: "50%", position: "absolute", bottom: 3, right: "50%", transform: "translateX(50%)", display: "block" }} />}
-                  </button>
-                );
+            <select value={calMonthIdx} onChange={e => setCalMonthIdx(Number(e.target.value))} style={{ width: "100%", marginBottom: 16, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
+              {APP_MONTHS.map((m, i) => {
+                const has = data.schedules.some(s => s.propertyId === selectedProp && s.months.includes(m.month + 1));
+                return <option key={m.label} value={i}>{m.label + (has ? " •" : "")}</option>;
               })}
-            </div>
-            <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{"Aplicações em " + MONTHS[selectedMonth]}</p>
+            </select>
+            <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{"Aplicações em " + APP_MONTHS[calMonthIdx].label}</p>
             {(() => {
               const area = propSel?.area || 1;
-              const items = data.schedules.filter(s => s.propertyId === selectedProp && s.months.includes(selectedMonth + 1));
+              const items = data.schedules.filter(s => s.propertyId === selectedProp && s.months.includes(APP_MONTHS[calMonthIdx].month + 1));
               if (!items.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação neste mês.</p>;
               return items.map(s => {
                 const prod = data.products.find(p => p.id === s.productId);
                 const totalQty = ((prod?.dosePerHa || 0) * area).toFixed(1);
-                const done = data.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === selectedMonth);
+                const done = data.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === APP_MONTHS[calMonthIdx].month && new Date(a.date).getFullYear() === APP_MONTHS[calMonthIdx].year);
+                const semEstoque = (prod?.stock || 0) <= 0;
                 return (
                   <Card key={s.id} style={{ marginBottom: 8 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -501,13 +520,16 @@ const navItems = [
                         <Badge label={prod?.type} type={prod?.type} />
                         <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "6px 0 0" }}>{"Dose: " + prod?.dosePerHa + " " + prod?.unit + "/ha · Total: " + totalQty + " " + prod?.unit}</p>
                         <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>{s.notes}</p>
+                        {!done && <p style={{ fontSize: 12, color: semEstoque ? COLORS.red : COLORS.teal, margin: "4px 0 0", fontWeight: 500 }}>{"Estoque: " + (prod?.stock || 0) + " " + prod?.unit + (semEstoque ? " ⚠️" : "")}</p>}
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <button onClick={() => setModal({ type: "schedule", item: { ...s } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer" }}>✏️</button>
                         <button onClick={() => setConfirm({ type: "schedule", id: s.id, label: prod?.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
                         {done
                           ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20 }}>✓</span>
-                          : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: totalQty, date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer" }}>Registrar</button>}
+                          : semEstoque
+                            ? <span style={{ fontSize: 11, color: COLORS.red, background: COLORS.redLight, padding: "4px 8px", borderRadius: 20 }}>Sem estoque</span>
+                            : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: totalQty, date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer" }}>Registrar</button>}
                       </div>
                     </div>
                   </Card>
@@ -517,26 +539,57 @@ const navItems = [
           </div>
         )}
 
-        {/* APLICAÇÕES */}
+        {/* APLICAÇÕES — Jul/2026 a Jul/2027 */}
         {tab === "apply" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Aplicações</p>
               <button onClick={() => setModal({ type: "application", item: {} })} style={{ fontSize: 13, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer" }}>+ Registrar</button>
             </div>
-            <select value={appPropFilter} onChange={e => setAppPropFilter(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
+            <select value={appPropFilter} onChange={e => setAppPropFilter(Number(e.target.value))} style={{ width: "100%", marginBottom: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               <option value={0}>Todas as propriedades</option>
               {data.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            <select value={appMonthIdx} onChange={e => setAppMonthIdx(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
+              {APP_MONTHS.map((m, i) => <option key={i} value={i}>{m.label}</option>)}
+            </select>
             <PillTabs tabs={[{ id: "defensivo", label: "💊 Defensivos" }, { id: "adubo", label: "🌾 Adubos" }]} value={appFilter} onChange={setAppFilter} />
-            {filteredApps(appFilter).length === 0
-              ? <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação encontrada.</p>
-              : filteredApps(appFilter).map(a => (
-                <AppCard key={a.id} a={a} products={data.products} properties={data.properties} appCost={appCost}
-                  onEdit={() => setModal({ type: "application", item: { ...a } })}
-                  onDelete={() => setConfirm({ type: "application", id: a.id, label: data.products.find(p => p.id === a.productId)?.name })} />
-              ))
-            }
+            {(() => {
+              const selMonth = APP_MONTHS[appMonthIdx];
+              const fn = appFilter === "defensivo" ? isDefensivo : isAdubo;
+              const apps = data.applications.filter(a => {
+                const prod = data.products.find(p => p.id === a.productId);
+                const d = new Date(a.date);
+                return fn(prod?.type) && (appPropFilter === 0 || a.propertyId === appPropFilter) && d.getMonth() === selMonth.month && d.getFullYear() === selMonth.year;
+              }).sort((a, b) => b.date.localeCompare(a.date));
+              if (!apps.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação em {selMonth.label}.</p>;
+              return apps.map(a => {
+                const prod = data.products.find(p => p.id === a.productId);
+                const pr = data.properties.find(p => p.id === a.propertyId);
+                const sacaria = isAdubo(prod?.type) && prod?.bagWeight ? Math.ceil(Number(a.qty) / prod.bagWeight) : null;
+                return (
+                  <Card key={a.id} style={{ marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 14 }}>{prod?.name}</p>
+                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "0 0 4px" }}>{(pr?.name || "") + " · " + a.date}</p>
+                        <Badge label={prod?.type} type={prod?.type} />
+                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "6px 0 0" }}>
+                          {"Total: " + a.qty + " " + (prod?.unit || "")}
+                          {sacaria !== null && <span style={{ color: COLORS.green, fontWeight: 600 }}>{" · Sacos: " + sacaria}</span>}
+                          {" · "}<span style={{ color: COLORS.teal, fontWeight: 500 }}>{"R$ " + appCost(a).toFixed(2)}</span>
+                        </p>
+                        {a.notes && <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>{a.notes}</p>}
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <button onClick={() => setModal({ type: "application", item: { ...a } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
+                        <button onClick={() => setConfirm({ type: "application", id: a.id, label: prod?.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              });
+            })()}
           </div>
         )}
 
@@ -557,11 +610,17 @@ const navItems = [
                 onDelete={() => setConfirm({ type: "product", id: p.id, label: p.name })} />
             ))}
             <SectionTitle>Histórico de compras</SectionTitle>
+            {/* Filtro por tipo */}
+            <select value={purchaseTypeFilter} onChange={e => setPurchaseTypeFilter(e.target.value)} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
+              <option value="">Todos os tipos</option>
+              {PRODUCT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
             {data.purchases.slice().reverse().map(c => {
               const prod = data.products.find(p => p.id === c.productId);
               if (!prod) return null;
-              const show = stockFilter === "defensivo" ? isDefensivo(prod.type) : isAdubo(prod.type);
-              if (!show) return null;
+              const showStock = stockFilter === "defensivo" ? isDefensivo(prod.type) : isAdubo(prod.type);
+              if (!showStock) return null;
+              if (purchaseTypeFilter && prod.type !== purchaseTypeFilter) return null;
               return (
                 <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "0.5px solid var(--color-border-tertiary)", fontSize: 13 }}>
                   <div><p style={{ margin: 0, fontWeight: 500 }}>{prod.name}</p><p style={{ margin: 0, color: "var(--color-text-secondary)", fontSize: 12 }}>{c.date + " · " + c.qty + " " + prod.unit}</p></div>
@@ -576,18 +635,13 @@ const navItems = [
           </div>
         )}
 
-	{/* USUÁRIOS */}
-	{tab === "users" && canManageUsers(currentUser.role) && (
- 	 <UserManager
-   	 users={users}
-   	 setUsers={setUsers}
-   	 properties={data.properties}
-   	 currentUser={currentUser}
- 	 />
-	)}
+        {/* USUÁRIOS */}
+        {tab === "users" && canManageUsers(currentUser.role) && (
+          <UserManager users={users} setUsers={setUsers} properties={data.properties} currentUser={currentUser} />
+        )}
 
         {/* RELATÓRIOS */}
-        {tab === "reports" && (
+        {tab === "reports" && canViewReports(currentUser.role) && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Relatórios</p>
@@ -601,7 +655,7 @@ const navItems = [
               <MetricCard label="Total em compras" value={"R$ " + data.purchases.reduce((s,p) => s + (p.totalCost || 0), 0).toLocaleString("pt-BR", { minimumFractionDigits: 0 })} />
             </div>
 
-	    {/* ── RELATÓRIO PLANEJADO vs REALIZADO ── */}
+            {/* Planejado vs Realizado */}
             <Card style={{ marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 12px" }}>📋 Planejado vs Realizado por mês</p>
               <div style={{ marginBottom: 12 }}>
@@ -615,7 +669,7 @@ const navItems = [
                 if (!schedsThisMonth.length) return null;
                 return (
                   <div key={mIdx} style={{ marginBottom: 14 }}>
-                    <p style={{ fontWeight: 500, fontSize: 13, margin: "0 0 8px", color: "var(--color-text-primary)", borderBottom: "0.5px solid var(--color-border-tertiary)", paddingBottom: 4 }}>{mLabel}</p>
+                    <p style={{ fontWeight: 500, fontSize: 13, margin: "0 0 8px", borderBottom: "0.5px solid var(--color-border-tertiary)", paddingBottom: 4 }}>{mLabel}</p>
                     {schedsThisMonth.map(s => {
                       const prod = data.products.find(p => p.id === s.productId);
                       const prop = data.properties.find(p => p.id === s.propertyId);
@@ -629,10 +683,7 @@ const navItems = [
                       return (
                         <div key={s.id} style={{ marginBottom: 10, padding: "10px 12px", background: "var(--color-background-secondary)", borderRadius: 10 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                            <div>
-                              <p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 13 }}>{prod?.name}</p>
-                              <Badge label={prod?.type} type={prod?.type} />
-                            </div>
+                            <div><p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 13 }}>{prod?.name}</p><Badge label={prod?.type} type={prod?.type} /></div>
                             <span style={{ fontSize: 11, fontWeight: 600, background: statusBg, color: statusText, padding: "3px 10px", borderRadius: 20 }}>{statusLabel}</span>
                           </div>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 4 }}>
@@ -704,16 +755,16 @@ const navItems = [
         </div>
       )}
 
-      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 420, background: "var(--color-background-primary)",         borderTop: "0.5px solid var(--color-border-tertiary)", display: "flex" }}>
-      {navItems
-      .filter(n => !n.masterOnly || canManageUsers(currentUser.role))
-      .filter(n => !n.restricted || canViewReports(currentUser.role))
-      .map(n => (
-        <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 12px", border: "none", background: "none", cursor: "pointer", color: tab === n.id ?    COLORS.green : "var(--color-text-secondary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-          <span style={{ fontSize: 18 }}>{n.icon}</span>
-          <span style={{ fontSize: 9, fontWeight: tab === n.id ? 500 : 400 }}>{n.label}</span>
-        </button>
-       ))}
+      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 420, background: "var(--color-background-primary)", borderTop: "0.5px solid var(--color-border-tertiary)", display: "flex" }}>
+        {navItems
+          .filter(n => !n.masterOnly || canManageUsers(currentUser.role))
+          .filter(n => !n.restricted || canViewReports(currentUser.role))
+          .map(n => (
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 12px", border: "none", background: "none", cursor: "pointer", color: tab === n.id ? COLORS.green : "var(--color-text-secondary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+              <span style={{ fontSize: 18 }}>{n.icon}</span>
+              <span style={{ fontSize: 9, fontWeight: tab === n.id ? 500 : 400 }}>{n.label}</span>
+            </button>
+          ))}
       </div>
     </div>
   );
@@ -739,20 +790,14 @@ function FormModal({ modal, data, onClose, onSave }) {
     if (modal.type === "application") {
       const prod = data.products.find(p => p.id === Number(form.productId));
       const qty = Number(form.qty);
-      if (!isEdit && prod && qty > prod.stock) {
-        setStockError("Quantidade (" + qty + " " + prod.unit + ") maior que o estoque disponível (" + prod.stock + " " + prod.unit + ").");
-        return;
-      }
-      if (!isEdit && prod && prod.stock <= 0) {
-        setStockError("Produto sem estoque disponível. Registre uma compra primeiro.");
-        return;
-      }
+      if (!isEdit && prod && prod.stock <= 0) { setStockError("Produto sem estoque. Registre uma compra primeiro."); return; }
+      if (!isEdit && prod && qty > prod.stock) { setStockError("Quantidade (" + qty + " " + prod.unit + ") maior que o estoque (" + prod.stock + " " + prod.unit + ")."); return; }
       setStockError("");
       onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied), qty });
     } else if (modal.type === "purchase") {
       onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost) });
     } else if (modal.type === "product") {
-      onSave("product", { ...base, dosePerHa: Number(form.dosePerHa), price: Number(form.price) });
+      onSave("product", { ...base, dosePerHa: Number(form.dosePerHa) || 0, price: Number(form.price), bagWeight: form.bagWeight ? Number(form.bagWeight) : null });
     } else if (modal.type === "schedule") {
       onSave("schedule", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), months });
     } else if (modal.type === "property") {
@@ -790,14 +835,14 @@ function FormModal({ modal, data, onClose, onSave }) {
           {prod && (
             <div style={{ background: stockOk ? "rgba(255,255,255,0.15)" : "rgba(163,45,45,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
               <p style={{ margin: 0, fontSize: 12, color: "#fff", fontWeight: 500 }}>
-                {stockOk ? "✅ Estoque disponível: " + prod.stock + " " + prod.unit : "⚠️ Produto sem estoque — registre uma compra primeiro"}
+                {stockOk ? "✅ Estoque: " + prod.stock + " " + prod.unit : "⚠️ Sem estoque — registre uma compra primeiro"}
               </p>
             </div>
           )}
           {sel("Propriedade", "propertyId", data.properties.map(p => ({ value: p.id, label: p.name })))}
           {inp("Data da aplicação", "date", "date")}
           {inp("Área aplicada (ha)", "areaApplied", "number", "Ex: 45")}
-          {inp("Quantidade utilizada", "qty", "number", "Ex: 36", prod ? prod.unit : "")}
+          {inp("Quantidade por mês (" + (prod ? prod.unit : "unid") + ")", "qty", "number", "Ex: 36", prod ? prod.unit : "")}
           {stockError && (
             <div style={{ background: "rgba(163,45,45,0.4)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
               <p style={{ margin: 0, fontSize: 12, color: "#fff" }}>⚠️ {stockError}</p>
@@ -807,20 +852,28 @@ function FormModal({ modal, data, onClose, onSave }) {
         </div>
       );
     }
-    if (modal.type === "purchase") return (
-      <div>
-        {sel("Produto", "productId", data.products.map(p => ({ value: p.id, label: p.name })))}
-        {inp("Data da compra", "date", "date")}
-        {inp("Quantidade comprada", "qty", "number", "Ex: 200")}
-        {inp("Custo total (R$)", "totalCost", "number", "Ex: 1500.00")}
-      </div>
-    );
+    if (modal.type === "purchase") {
+      const prod = data.products.find(p => p.id === Number(form.productId));
+      return (
+        <div>
+          {sel("Tipo de produto", "purchaseType", PRODUCT_TYPES.map(t => ({ value: t, label: t })))}
+          {sel("Produto", "productId", data.products.filter(p => !form.purchaseType || p.type === form.purchaseType).map(p => ({ value: p.id, label: p.name })))}
+          {inp("Data da compra", "date", "date")}
+          {inp("Quantidade comprada", "qty", "number", "Ex: 200", prod ? prod.unit : "")}
+          {inp("Custo total (R$)", "totalCost", "number", "Ex: 1500.00")}
+        </div>
+      );
+    }
     if (modal.type === "product") return (
       <div>
         {inp("Nome do produto", "name", "text", "Ex: NPK 20-05-20")}
         {sel("Tipo de produto", "type", PRODUCT_TYPES.map(t => ({ value: t, label: t })))}
         {inp("Unidade de medida", "unit", "text", "Ex: kg, L, g")}
-        {inp("Dose por hectare", "dosePerHa", "number", "Ex: 120")}
+        {!form.type
+          ? <p style={{ fontSize: 12, opacity: 0.75, margin: "-6px 0 14px" }}>Escolha o tipo de produto para ver os campos.</p>
+          : isAdubo(form.type)
+            ? inp("Peso da sacaria (kg)", "bagWeight", "number", "Ex: 50")
+            : inp("Dose por hectare", "dosePerHa", "number", "Ex: 0.8")}
         {inp("Preço unitário (R$)", "price", "number", "Ex: 4.50")}
       </div>
     );
