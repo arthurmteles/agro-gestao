@@ -779,7 +779,18 @@ export default function App() {
 
 function FormModal({ modal, data, onClose, onSave }) {
   const isEdit = !!modal.item?.id;
-  const [form, setForm] = useState(modal.item || {});
+  const [form, setForm] = useState(() => {
+    const it = { ...(modal.item || {}) };
+    // Aplicação de adubo: converte kg em sacos para preencher o campo "Quantidade de sacos"
+    if (modal.type === "application" && it.bags == null && it.qty) {
+      const pr = data.products.find(p => p.id === Number(it.productId));
+      if (isAdubo(pr?.type) && pr?.bagWeight) {
+        const b = Number(it.qty) / pr.bagWeight;
+        it.bags = it.id ? Math.round(b * 100) / 100 : Math.ceil(b);
+      }
+    }
+    return it;
+  });
   const [months, setMonths] = useState(modal.item?.months || []);
   const [stockError, setStockError] = useState("");
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -796,11 +807,15 @@ function FormModal({ modal, data, onClose, onSave }) {
     const base = { ...form, id: form.id || Date.now() };
     if (modal.type === "application") {
       const prod = data.products.find(p => p.id === Number(form.productId));
-      const qty = Number(form.qty);
+      const prop = data.properties.find(p => p.id === Number(form.propertyId));
+      const bagMode = isAdubo(prod?.type) && prod?.bagWeight;
+      // Adubo: sacos × peso da sacaria = quilos (usado no estoque e no comparativo com o cronograma)
+      const qty = bagMode ? Number(form.bags || 0) * prod.bagWeight : Number(form.qty);
+      if (bagMode && !(Number(form.bags) > 0)) { setStockError("Informe a quantidade de sacos."); return; }
       if (!isEdit && prod && prod.stock <= 0) { setStockError("Produto sem estoque. Registre uma compra primeiro."); return; }
       if (!isEdit && prod && qty > prod.stock) { setStockError("Quantidade (" + qty + " " + prod.unit + ") maior que o estoque (" + prod.stock + " " + prod.unit + ")."); return; }
       setStockError("");
-      onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied), qty });
+      onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied) || prop?.area || 0, qty, bags: bagMode ? Number(form.bags) : null });
     } else if (modal.type === "purchase") {
       onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost) });
     } else if (modal.type === "product") {
@@ -848,8 +863,18 @@ function FormModal({ modal, data, onClose, onSave }) {
           )}
           {sel("Propriedade", "propertyId", data.properties.map(p => ({ value: p.id, label: p.name })))}
           {inp("Data da aplicação", "date", "date")}
-          {inp("Área aplicada (ha)", "areaApplied", "number", "Ex: 45")}
-          {inp("Quantidade por mês (" + (prod ? prod.unit : "unid") + ")", "qty", "number", "Ex: 36", prod ? prod.unit : "")}
+          {isAdubo(prod?.type) && prod?.bagWeight ? (
+            <div>
+              {inp("Quantidade de sacos", "bags", "number", "Ex: 108", "sacos")}
+              {Number(form.bags) > 0 && <p style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", margin: "-8px 0 14px" }}>{"= " + (Number(form.bags) * prod.bagWeight).toLocaleString("pt-BR") + " kg (sacos de " + prod.bagWeight + " kg)"}</p>}
+            </div>
+          ) : (
+            <div>
+              {isAdubo(prod?.type) && <p style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", margin: "0 0 14px" }}>⚠️ Cadastre o peso da sacaria deste adubo (Estoque → ✏️) para lançar em sacos.</p>}
+              {inp("Área aplicada (ha)", "areaApplied", "number", "Ex: 45")}
+              {inp("Quantidade por mês (" + (prod ? prod.unit : "unid") + ")", "qty", "number", "Ex: 36", prod ? prod.unit : "")}
+            </div>
+          )}
           {stockError && (
             <div style={{ background: "rgba(163,45,45,0.4)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
               <p style={{ margin: 0, fontSize: 12, color: "#fff" }}>⚠️ {stockError}</p>
