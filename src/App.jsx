@@ -37,6 +37,8 @@ const APP_MONTHS = [
   { label: "Jun/2027", month: 5, year: 2027 },
   { label: "Jul/2027", month: 6, year: 2027 },
 ];
+// Meses para programar aplicações: Ago/2026 a Jul/2027 (grava o nº do mês 1–12, compatível com dados antigos)
+const SCHED_MONTHS = APP_MONTHS.slice(1);
 
 const typeColor = (t) => {
   if (t === "Adubo") return { bg: COLORS.greenLight, text: COLORS.green };
@@ -201,7 +203,7 @@ export default function App() {
   const [appMonthIdx, setAppMonthIdx] = useState(0);
   const [calMonthIdx, setCalMonthIdx] = useState(() => {
     const n = new Date();
-    const i = APP_MONTHS.findIndex(m => m.month === n.getMonth() && m.year === n.getFullYear());
+    const i = SCHED_MONTHS.findIndex(m => m.month === n.getMonth() && m.year === n.getFullYear());
     return i < 0 ? 0 : i;
   });
   const [loadFailed, setLoadFailed] = useState(false);
@@ -501,21 +503,21 @@ export default function App() {
               {data.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <select value={calMonthIdx} onChange={e => setCalMonthIdx(Number(e.target.value))} style={{ width: "100%", marginBottom: 16, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
-              {APP_MONTHS.map((m, i) => {
+              {SCHED_MONTHS.map((m, i) => {
                 const has = data.schedules.some(s => s.propertyId === selectedProp && s.months.includes(m.month + 1));
                 return <option key={m.label} value={i}>{m.label + (has ? " •" : "")}</option>;
               })}
             </select>
-            <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{"Aplicações em " + APP_MONTHS[calMonthIdx].label}</p>
+            <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{"Aplicações em " + SCHED_MONTHS[calMonthIdx].label}</p>
             {(() => {
               const area = propSel?.area || 1;
-              const items = data.schedules.filter(s => s.propertyId === selectedProp && s.months.includes(APP_MONTHS[calMonthIdx].month + 1));
+              const items = data.schedules.filter(s => s.propertyId === selectedProp && s.months.includes(SCHED_MONTHS[calMonthIdx].month + 1));
               if (!items.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação neste mês.</p>;
               return items.map(s => {
                 const prod = data.products.find(p => p.id === s.productId);
                 const totalQty = plannedQty(s, prod, area).toFixed(1);
                 const sacos = sacosFor(prod, totalQty);
-                const done = data.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === APP_MONTHS[calMonthIdx].month && new Date(a.date).getFullYear() === APP_MONTHS[calMonthIdx].year);
+                const done = data.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === SCHED_MONTHS[calMonthIdx].month && new Date(a.date).getFullYear() === SCHED_MONTHS[calMonthIdx].year);
                 const semEstoque = (prod?.stock || 0) <= 0;
                 return (
                   <Card key={s.id} style={{ marginBottom: 8 }}>
@@ -899,12 +901,12 @@ function FormModal({ modal, data, onClose, onSave }) {
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 13, color: "#fff", fontWeight: 700, display: "block", marginBottom: 6 }}>Meses de aplicação</label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
-            {MONTHS.map((m, i) => (
-              <button key={m} onClick={() => setMonths(ms => ms.includes(i+1) ? ms.filter(x => x !== i+1) : [...ms, i+1])}
-                style={{ padding: "7px 4px", borderRadius: 8, border: "0.5px solid " + (months.includes(i+1) ? "#fff" : "rgba(255,255,255,0.3)"), background: months.includes(i+1) ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.08)", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: months.includes(i+1) ? 700 : 400 }}>
-                {m}
+            {SCHED_MONTHS.map((m) => { const n = m.month + 1; return (
+              <button key={m.label} onClick={() => setMonths(ms => ms.includes(n) ? ms.filter(x => x !== n) : [...ms, n])}
+                style={{ padding: "7px 4px", borderRadius: 8, border: "0.5px solid " + (months.includes(n) ? "#fff" : "rgba(255,255,255,0.3)"), background: months.includes(n) ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.08)", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: months.includes(n) ? 700 : 400 }}>
+                {m.label}
               </button>
-            ))}
+            ); })}
           </div>
         </div>
         {inp("Observações", "notes", "text", "Ex: Controle de ferrugem")}
