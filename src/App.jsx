@@ -420,7 +420,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.1</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.5</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -569,7 +569,16 @@ export default function App() {
                 const prod = data.products.find(p => p.id === s.productId);
                 const totalQty = plannedQty(s, prod, area).toFixed(1);
                 const sacos = sacosFor(prod, totalQty);
-                const done = vd.applications.some(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === SCHED_MONTHS[calMonthIdx].month && new Date(a.date).getFullYear() === SCHED_MONTHS[calMonthIdx].year);
+                // Percentual realizado no mês/ano selecionado (só fica completo com 100%)
+                const selM = SCHED_MONTHS[calMonthIdx];
+                const planned = Number(totalQty);
+                const applied = vd.applications.filter(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date + "T12:00").getMonth() === selM.month && new Date(a.date + "T12:00").getFullYear() === selM.year).reduce((t, a) => t + num(a.qty), 0);
+                const pct = planned > 0 ? Math.min(100, (applied / planned) * 100) : (applied > 0 ? 100 : 0);
+                const done = pct >= 100;
+                const remaining = Math.max(0, planned - applied);
+                const barColor = pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : COLORS.grayLight;
+                const now = new Date();
+                const regDate = (now.getMonth() === selM.month && now.getFullYear() === selM.year) ? now.toISOString().split("T")[0] : selM.year + "-" + String(selM.month + 1).padStart(2, "0") + "-01";
                 const semEstoque = (prod?.stock || 0) <= 0;
                 return (
                   <Card key={s.id} style={{ marginBottom: 8 }}>
@@ -585,11 +594,21 @@ export default function App() {
                         <button onClick={() => setModal({ type: "schedule", item: { ...s } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer" }}>✏️</button>
                         <button onClick={() => setConfirm({ type: "schedule", id: s.id, label: prod?.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
                         {done
-                          ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20 }}>✓</span>
+                          ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>✓ 100%</span>
                           : semEstoque
                             ? <span style={{ fontSize: 11, color: COLORS.red, background: COLORS.redLight, padding: "4px 8px", borderRadius: 20 }}>Sem estoque</span>
-                            : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: totalQty, date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer" }}>Registrar</button>}
+                            : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: remaining.toFixed(1), date: regDate } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>{pct > 0 ? "Completar" : "Registrar"}</button>}
                       </div>
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 3 }}>
+                        <span>Realizado: <strong style={{ color: pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : "var(--color-text-secondary)" }}>{applied.toFixed(1)} {prod?.unit}</strong>{sacosFor(prod, applied) !== null && applied > 0 ? " (" + sacosFor(prod, applied) + " sacos)" : ""}</span>
+                        <span style={{ fontWeight: 600, color: pct > 0 ? barColor : "var(--color-text-secondary)" }}>{pct.toFixed(0)}%</span>
+                      </div>
+                      <div style={{ background: "var(--color-background-secondary)", borderRadius: 4, height: 6 }}>
+                        <div style={{ width: pct + "%", background: barColor, height: "100%", borderRadius: 4, transition: "width 0.3s" }} />
+                      </div>
+                      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "3px 0 0" }}>Planejado: {planned.toFixed(1)} {prod?.unit}{!done && applied > 0 ? " · Falta: " + remaining.toFixed(1) + " " + prod?.unit : ""}</p>
                     </div>
                   </Card>
                 );
