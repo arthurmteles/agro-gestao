@@ -18,6 +18,8 @@ const isDefensivo = (t) => t?.startsWith("Defensivo");
 const isAdubo = (t) => t === "Adubo" || t === "Micronutriente";
 const num = (v) => Number(v) || 0;
 const round2 = (v) => Math.round(v * 100) / 100;
+// Formata número de sacos: inteiro sem casas, fracionado com 1 casa (ex.: 64 ou 12,5)
+const fmtSacos = (n) => Number.isInteger(round2(n)) ? String(round2(n)) : n.toFixed(1).replace(".", ",");
 // Quantidade planejada por mês: usa a quantidade informada no cronograma; se não houver, dose/ha × área
 const plannedQty = (s, prod, area) => s?.qty ? Number(s.qty) : (prod?.dosePerHa || 0) * (area || 0);
 // Sacos = quilos ÷ peso da sacaria (arredonda para cima)
@@ -174,7 +176,7 @@ const StockCard = ({ p, properties, applications = [], onEdit, onDelete }) => {
         <div><p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{p.name}</p><Badge label={p.type} type={p.type} /></div>
         <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
           <p style={{ fontWeight: 500, margin: 0, fontSize: 16, color: bar }}>{p.stock} {p.unit}</p>
-          <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: 0 }}>{"~" + mLeft + " meses"}</p>
+          <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: 0 }}>{isAdubo(p.type) && p.bagWeight ? fmtSacos(stockNow / p.bagWeight) + " sacos" : "~" + mLeft + " meses"}</p>
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={onEdit} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
             <button onClick={onDelete} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
@@ -185,7 +187,7 @@ const StockCard = ({ p, properties, applications = [], onEdit, onDelete }) => {
         <div style={{ width: pct + "%", background: COLORS.green, height: "100%", borderRadius: 4, transition: "width 0.3s" }} />
       </div>
       <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "4px 0 0" }}>
-        {"Consumido: " + pct.toFixed(0) + "% (" + Math.round(consumed * 100) / 100 + " " + p.unit + " aplicados)"}
+        {"Consumido: " + pct.toFixed(0) + "% (" + round2(consumed) + " " + p.unit + (isAdubo(p.type) && p.bagWeight ? " · " + fmtSacos(consumed / p.bagWeight) + " sacos" : "") + " aplicados)"}
       </p>
       <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>
         {isAdubo(p.type)
@@ -421,7 +423,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.6</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.7</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
