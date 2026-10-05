@@ -13,7 +13,7 @@ const COLORS = {
   teal: "#0F6E56", tealLight: "#E1F5EE",
 };
 const MONTHS = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
-const PRODUCT_TYPES = ["Adubo","Defensivo Fungicida","Defensivo Inseticida","Defensivo Herbicida","Micronutriente"];
+const PRODUCT_TYPES = ["Adubo","Defensivo Fungicida","Defensivo Inseticida","Defensivo Herbicida","Defensivo Adjuvante","Defensivo Biológico","Defensivo Cola","Micronutriente"];
 const isDefensivo = (t) => t?.startsWith("Defensivo");
 const isAdubo = (t) => t === "Adubo" || t === "Micronutriente";
 const num = (v) => Number(v) || 0;
@@ -49,6 +49,9 @@ const typeColor = (t) => {
   if (t?.includes("Fungicida")) return { bg: COLORS.blueLight, text: COLORS.blue };
   if (t?.includes("Inseticida")) return { bg: "#FBEAF0", text: "#993556" };
   if (t?.includes("Herbicida")) return { bg: COLORS.amberLight, text: COLORS.amber };
+  if (t?.includes("Adjuvante")) return { bg: "#EEEDFE", text: "#534AB7" };
+  if (t?.includes("Biológico")) return { bg: "#EEF5DD", text: "#4F6B12" };
+  if (t?.includes("Cola")) return { bg: "#F3EDE6", text: "#7A5B3A" };
   if (t === "Micronutriente") return { bg: COLORS.tealLight, text: COLORS.teal };
   return { bg: COLORS.grayLight, text: COLORS.gray };
 };
@@ -424,7 +427,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.9</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.10</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
