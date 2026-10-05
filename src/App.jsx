@@ -173,7 +173,7 @@ const StockCard = ({ p, properties, applications = [], onEdit, onDelete }) => {
   return (
     <Card style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-        <div><p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{p.name}</p><Badge label={p.type} type={p.type} /></div>
+        <div><p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{p.name}{isDefensivo(p.type) && p.activeIngredient && <span style={{ fontWeight: 400, color: "var(--color-text-secondary)" }}>{" · " + p.activeIngredient}</span>}</p><Badge label={p.type} type={p.type} /></div>
         <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
           <p style={{ fontWeight: 500, margin: 0, fontSize: 16, color: bar }}>{p.stock} {p.unit}</p>
           <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: 0 }}>{isAdubo(p.type) && p.bagWeight ? fmtSacos(stockNow / p.bagWeight) + " sacos" : "~" + mLeft + " meses"}</p>
@@ -208,6 +208,7 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [stockFilter, setStockFilter] = useState("defensivo");
+  const [defTypeFilter, setDefTypeFilter] = useState("");
   const [appFilter, setAppFilter] = useState("defensivo");
   const [appPropFilter, setAppPropFilter] = useState(0);
   const [appMonthIdx, setAppMonthIdx] = useState(0);
@@ -423,7 +424,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.7</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.9</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -689,7 +690,16 @@ export default function App() {
               </div>
             </div>
             <PillTabs tabs={[{ id: "defensivo", label: "💊 Defensivos" }, { id: "adubo", label: "🌾 Adubos" }]} value={stockFilter} onChange={setStockFilter} />
-            {data.products.filter(p => stockFilter === "defensivo" ? isDefensivo(p.type) : isAdubo(p.type)).map(p => (
+            {stockFilter === "defensivo" && (
+              <select value={defTypeFilter} onChange={e => setDefTypeFilter(e.target.value)} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
+                <option value="">Todos os defensivos</option>
+                {PRODUCT_TYPES.filter(isDefensivo).map(t => <option key={t} value={t}>{t.replace("Defensivo ", "")}</option>)}
+              </select>
+            )}
+            {data.products
+              .filter(p => stockFilter === "defensivo" ? isDefensivo(p.type) && (!defTypeFilter || p.type === defTypeFilter) : isAdubo(p.type))
+              .slice().sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" }))
+              .map(p => (
               <StockCard key={p.id} p={p} properties={vd.properties} applications={data.applications}
                 onEdit={() => setModal({ type: "product", item: { ...p } })}
                 onDelete={() => setConfirm({ type: "product", id: p.id, label: p.name })} />
@@ -898,7 +908,7 @@ function FormModal({ modal, data, onClose, onSave }) {
     } else if (modal.type === "purchase") {
       onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost) });
     } else if (modal.type === "product") {
-      onSave("product", { ...base, dosePerHa: Number(form.dosePerHa) || 0, price: Number(form.price), bagWeight: form.bagWeight ? Number(form.bagWeight) : null });
+      onSave("product", { ...base, activeIngredient: isDefensivo(form.type) ? (form.activeIngredient || "").trim() : null, dosePerHa: Number(form.dosePerHa) || 0, price: Number(form.price), bagWeight: form.bagWeight ? Number(form.bagWeight) : null });
     } else if (modal.type === "schedule") {
       onSave("schedule", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), qty: form.qty ? Number(form.qty) : null, months });
     } else if (modal.type === "property") {
@@ -979,6 +989,7 @@ function FormModal({ modal, data, onClose, onSave }) {
       <div>
         {inp("Nome do produto", "name", "text", "Ex: NPK 20-05-20")}
         {sel("Tipo de produto", "type", PRODUCT_TYPES.map(t => ({ value: t, label: t })))}
+        {isDefensivo(form.type) && inp("Princípio ativo", "activeIngredient", "text", "Ex: Azoxistrobina + Ciproconazol")}
         {inp("Unidade de medida", "unit", "text", "Ex: kg, L, g")}
         {!form.type
           ? <p style={{ fontSize: 12, opacity: 0.75, margin: "-6px 0 14px" }}>Escolha o tipo de produto para ver os campos.</p>
