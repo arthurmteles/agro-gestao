@@ -18,6 +18,9 @@ const isDefensivo = (t) => t?.startsWith("Defensivo");
 const isAdubo = (t) => t === "Adubo" || t === "Micronutriente";
 const num = (v) => Number(v) || 0;
 const round2 = (v) => Math.round(v * 100) / 100;
+const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
+// Aplicação sem data válida (registros antigos)
+const hasDate = (a) => !!a.date && !isNaN(new Date(a.date + "T12:00").getTime());
 // Formata número de sacos: inteiro sem casas, fracionado com 1 casa (ex.: 64 ou 12,5)
 const fmtSacos = (n) => Number.isInteger(round2(n)) ? String(round2(n)) : n.toFixed(1).replace(".", ",");
 // Quantidade planejada por mês: usa a quantidade informada no cronograma; se não houver, dose/ha × área
@@ -427,7 +430,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.10</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.11</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -641,16 +644,19 @@ export default function App() {
             </select>
             <select value={appMonthIdx} onChange={e => setAppMonthIdx(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               {APP_MONTHS.map((m, i) => <option key={i} value={i}>{m.label}</option>)}
+              <option value={-1}>{"Sem data de aplicação (" + vd.applications.filter(a => !hasDate(a)).length + ")"}</option>
             </select>
             <PillTabs tabs={[{ id: "defensivo", label: "💊 Defensivos" }, { id: "adubo", label: "🌾 Adubos" }]} value={appFilter} onChange={setAppFilter} />
             {(() => {
-              const selMonth = APP_MONTHS[appMonthIdx];
+              const noDate = appMonthIdx === -1;
+              const selMonth = noDate ? { label: "sem data" } : APP_MONTHS[appMonthIdx];
               const fn = appFilter === "defensivo" ? isDefensivo : isAdubo;
               const apps = vd.applications.filter(a => {
                 const prod = data.products.find(p => p.id === a.productId);
-                const d = new Date(a.date);
-                return fn(prod?.type) && (appPropFilter === 0 || a.propertyId === appPropFilter) && d.getMonth() === selMonth.month && d.getFullYear() === selMonth.year;
-              }).sort((a, b) => b.date.localeCompare(a.date));
+                const d = new Date(a.date + "T12:00");
+                const inPeriod = noDate ? !hasDate(a) : (hasDate(a) && d.getMonth() === selMonth.month && d.getFullYear() === selMonth.year);
+                return fn(prod?.type) && (appPropFilter === 0 || a.propertyId === appPropFilter) && inPeriod;
+              }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
               if (!apps.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação em {selMonth.label}.</p>;
               return apps.map(a => {
                 const prod = data.products.find(p => p.id === a.productId);
@@ -661,7 +667,7 @@ export default function App() {
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <div style={{ flex: 1 }}>
                         <p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 14 }}>{prod?.name}</p>
-                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "0 0 4px" }}>{(pr?.name || "") + " · " + a.date}</p>
+                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "0 0 4px" }}>{(pr?.name || "") + " · " + (hasDate(a) ? a.date : "⚠️ Sem data")}</p>
                         <Badge label={prod?.type} type={prod?.type} />
                         <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "6px 0 0" }}>
                           {"Total: " + a.qty + " " + (prod?.unit || "")}
@@ -874,6 +880,10 @@ function FormModal({ modal, data, onClose, onSave }) {
   const [form, setForm] = useState(() => {
     const it = { ...(modal.item || {}) };
     // Aplicação de adubo: converte kg em sacos para preencher o campo "Quantidade de sacos"
+    if (modal.type === "application" && it.productId && !it.appType) {
+      const pr0 = data.products.find(p => p.id === Number(it.productId));
+      if (pr0) it.appType = pr0.type;
+    }
     if (modal.type === "application" && it.bags == null && it.qty) {
       const pr = data.products.find(p => p.id === Number(it.productId));
       if (isAdubo(pr?.type) && pr?.bagWeight) {
@@ -903,10 +913,15 @@ function FormModal({ modal, data, onClose, onSave }) {
       const bagMode = isAdubo(prod?.type) && prod?.bagWeight;
       // Adubo: sacos × peso da sacaria = quilos (usado no estoque e no comparativo com o cronograma)
       const qty = bagMode ? Number(form.bags || 0) * prod.bagWeight : Number(form.qty);
+      if (!prod) { setStockError("Escolha o produto."); return; }
+      if (!form.propertyId) { setStockError("Escolha a propriedade."); return; }
+      if (!hasDate(form)) { setStockError("Informe a data da aplicação."); return; }
       if (bagMode && !(Number(form.bags) > 0)) { setStockError("Informe a quantidade de sacos."); return; }
+      if (!bagMode && !(qty > 0)) { setStockError("Informe a quantidade."); return; }
       if (!isEdit && prod && prod.stock <= 0) { setStockError("Produto sem estoque. Registre uma compra primeiro."); return; }
       if (!isEdit && prod && qty > prod.stock) { setStockError("Quantidade (" + qty + " " + prod.unit + ") maior que o estoque (" + prod.stock + " " + prod.unit + ")."); return; }
       setStockError("");
+      delete base.appType;
       onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied) || prop?.area || 0, qty, bags: bagMode ? Number(form.bags) : null });
     } else if (modal.type === "purchase") {
       onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost) });
@@ -945,7 +960,11 @@ function FormModal({ modal, data, onClose, onSave }) {
       const stockOk = !prod || prod.stock > 0;
       return (
         <div>
-          {sel("Produto", "productId", data.products.map(p => ({ value: p.id, label: p.name + " (" + p.stock + " " + p.unit + " em estoque)" })))}
+          {sel("Tipo de produto", "appType", PRODUCT_TYPES.map(t => ({ value: t, label: t })))}
+          {sel("Produto", "productId", data.products
+            .filter(p => !form.appType || p.type === form.appType || p.id === Number(form.productId))
+            .slice().sort(byName)
+            .map(p => ({ value: p.id, label: p.name + (p.activeIngredient ? " · " + p.activeIngredient : "") + " (" + p.stock + " " + p.unit + " em estoque)" })))}
           {prod && (
             <div style={{ background: stockOk ? "rgba(255,255,255,0.15)" : "rgba(163,45,45,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
               <p style={{ margin: 0, fontSize: 12, color: "#fff", fontWeight: 500 }}>
@@ -954,7 +973,7 @@ function FormModal({ modal, data, onClose, onSave }) {
             </div>
           )}
           {sel("Propriedade", "propertyId", data.properties.map(p => ({ value: p.id, label: p.name })))}
-          {inp("Data da aplicação", "date", "date")}
+          {inp("Data da aplicação *", "date", "date")}
           {isAdubo(prod?.type) && prod?.bagWeight ? (
             <div>
               {inp("Quantidade de sacos", "bags", "number", "Ex: 108", "sacos")}
@@ -963,8 +982,7 @@ function FormModal({ modal, data, onClose, onSave }) {
           ) : (
             <div>
               {isAdubo(prod?.type) && <p style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", margin: "0 0 14px" }}>⚠️ Cadastre o peso da sacaria deste adubo (Estoque → ✏️) para lançar em sacos.</p>}
-              {inp("Área aplicada (ha)", "areaApplied", "number", "Ex: 45")}
-              {inp("Quantidade por mês (" + (prod ? prod.unit : "unid") + ")", "qty", "number", "Ex: 36", prod ? prod.unit : "")}
+              {inp("Quantidade (" + (prod ? prod.unit : "unid") + ")", "qty", "number", "Ex: 36", prod ? prod.unit : "")}
             </div>
           )}
           {stockError && (
