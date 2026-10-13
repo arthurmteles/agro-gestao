@@ -18,6 +18,14 @@ const isDefensivo = (t) => t?.startsWith("Defensivo");
 const isAdubo = (t) => t === "Adubo" || t === "Micronutriente";
 const num = (v) => Number(v) || 0;
 const round2 = (v) => Math.round(v * 100) / 100;
+// Preço unitário = média de (custo total ÷ quantidade) de cada compra do produto.
+// Sem compras registradas, usa o preço antigo do cadastro (se existir).
+const unitPrice = (p, purchases = []) => {
+  const vals = purchases.filter(c => String(c.productId) === String(p?.id) && num(c.qty) > 0 && num(c.totalCost) > 0).map(c => num(c.totalCost) / num(c.qty));
+  if (vals.length) return vals.reduce((t, v) => t + v, 0) / vals.length;
+  return num(p?.price);
+};
+const brl = (v) => "R$ " + num(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
 // Aplicação sem data válida (registros antigos)
 const hasDate = (a) => !!a.date && !isNaN(new Date(a.date + "T12:00").getTime());
@@ -167,7 +175,9 @@ function PieChart({ slices }) {
   );
 }
 
-const StockCard = ({ p, properties, applications = [], onEdit, onDelete }) => {
+const StockCard = ({ p, properties, applications = [], purchases = [], onEdit, onDelete }) => {
+  const pu = unitPrice(p, purchases);
+  const hasBuy = purchases.some(c => String(c.productId) === String(p.id));
   const ref = isAdubo(p.type) ? (p.bagWeight || 1) : 1;
   const maxM = Math.max(...properties.map(pr => p.dosePerHa * pr.area), 1);
   const mLeft = Math.floor(p.stock / maxM);
@@ -197,8 +207,9 @@ const StockCard = ({ p, properties, applications = [], onEdit, onDelete }) => {
       </p>
       <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>
         {isAdubo(p.type)
-          ? "Sacaria: " + (p.bagWeight || "?") + " kg · R$ " + (p.price || 0).toFixed(2) + "/kg"
-          : p.dosePerHa + " " + p.unit + "/ha · R$ " + (p.price || 0).toFixed(2) + "/" + p.unit}
+          ? "Sacaria: " + (p.bagWeight || "?") + " kg · " + brl(pu) + "/" + p.unit + (p.bagWeight ? " · " + brl(pu * p.bagWeight) + "/saco" : "") + (num(p.dosePerHa) > 0 ? " · " + brl(pu * p.dosePerHa) + "/ha" : "")
+          : p.dosePerHa + " " + p.unit + "/ha · " + brl(pu) + "/" + p.unit + " · " + brl(pu * num(p.dosePerHa)) + "/ha"}
+        {!hasBuy && <span style={{ color: COLORS.amber }}>{" · sem compras"}</span>}
       </p>
     </Card>
   );
@@ -305,7 +316,7 @@ export default function App() {
 
   const appCost = (a) => {
     const prod = data.products.find(p => p.id === a.productId);
-    return (prod?.price || 0) * a.qty;
+    return unitPrice(prod, data.purchases) * num(a.qty);
   };
   const propCost = (propId) => vd.applications.filter(a => a.propertyId === propId).reduce((s, a) => s + appCost(a), 0);
 
@@ -430,7 +441,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.11</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.12</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -709,7 +720,7 @@ export default function App() {
               .filter(p => stockFilter === "defensivo" ? isDefensivo(p.type) && (!defTypeFilter || p.type === defTypeFilter) : isAdubo(p.type))
               .slice().sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" }))
               .map(p => (
-              <StockCard key={p.id} p={p} properties={vd.properties} applications={data.applications}
+              <StockCard key={p.id} p={p} properties={vd.properties} applications={data.applications} purchases={data.purchases}
                 onEdit={() => setModal({ type: "product", item: { ...p } })}
                 onDelete={() => setConfirm({ type: "product", id: p.id, label: p.name })} />
             ))}
@@ -926,7 +937,7 @@ function FormModal({ modal, data, onClose, onSave }) {
     } else if (modal.type === "purchase") {
       onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost) });
     } else if (modal.type === "product") {
-      onSave("product", { ...base, activeIngredient: isDefensivo(form.type) ? (form.activeIngredient || "").trim() : null, dosePerHa: Number(form.dosePerHa) || 0, price: Number(form.price), bagWeight: form.bagWeight ? Number(form.bagWeight) : null });
+      onSave("product", { ...base, activeIngredient: isDefensivo(form.type) ? (form.activeIngredient || "").trim() : null, dosePerHa: Number(form.dosePerHa) || 0, bagWeight: form.bagWeight ? Number(form.bagWeight) : null });
     } else if (modal.type === "schedule") {
       onSave("schedule", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), qty: form.qty ? Number(form.qty) : null, months });
     } else if (modal.type === "property") {
@@ -1017,7 +1028,7 @@ function FormModal({ modal, data, onClose, onSave }) {
           : isAdubo(form.type)
             ? inp("Peso da sacaria (kg)", "bagWeight", "number", "Ex: 50")
             : inp("Dose por hectare", "dosePerHa", "number", "Ex: 0.8")}
-        {inp("Preço unitário (R$)", "price", "number", "Ex: 4.50")}
+        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", margin: "0 0 4px" }}>O preço é calculado pelas compras registradas (custo ÷ quantidade).</p>
       </div>
     );
     if (modal.type === "schedule") return (
