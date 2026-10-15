@@ -31,6 +31,22 @@ const stockKey = (p) => (isDefensivo(p.type) && p.activeIngredient ? p.activeIng
 const byStockKey = (a, b) => stockKey(a).localeCompare(stockKey(b), "pt-BR", { sensitivity: "base" }) || (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
 // Índice do mês atual dentro de APP_MONTHS (ou 0 se fora do período)
 const currentAppMonthIdx = () => { const n = new Date(); const i = APP_MONTHS.findIndex(m => m.month === n.getMonth() && m.year === n.getFullYear()); return i < 0 ? 0 : i; };
+// Notificação de aplicação registrada (produto, propriedade, quantidade e mês)
+const monthLabel = (dateStr) => { const d = new Date((dateStr || "") + "T12:00"); return isNaN(d) ? "sem data" : MONTHS[d.getMonth()] + "/" + d.getFullYear(); };
+const buildAppNotif = (item, d, user) => {
+  const pr = d.products.find(p => String(p.id) === String(item.productId));
+  const prop = d.properties.find(p => String(p.id) === String(item.propertyId));
+  const unit = pr?.unit || "";
+  const bags = isAdubo(pr?.type) && pr?.bagWeight ? fmtSacos(num(item.qty) / pr.bagWeight) : null;
+  const qtyText = round2(num(item.qty)) + " " + unit + (bags ? " (" + bags + " sacos)" : "");
+  return {
+    id: Date.now() + 1, type: "application", readBy: [],
+    productId: item.productId, propertyId: item.propertyId, applicationId: item.id,
+    productName: pr?.name || "Produto", propertyName: prop?.name || "", qtyText, month: monthLabel(item.date),
+    at: new Date().toISOString(), by: user?.name || "",
+    msg: (pr?.name || "Produto") + " · " + (prop?.name || "") + " · " + qtyText + " · " + monthLabel(item.date),
+  };
+};
 const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
 // Aplicação sem data válida (registros antigos)
 const hasDate = (a) => !!a.date && !isNaN(new Date(a.date + "T12:00").getTime());
@@ -131,8 +147,6 @@ const initData = {
     { id: 3, productId: 3, date: "2026-08-15", qty: 30, totalCost: 3600 },
   ],
   notifications: [
-    { id: 1, msg: "NPK 20-05-20 programado para Out em Santa Rosa", type: "schedule", read: false },
-    { id: 2, msg: "Estoque de Imidacloprido abaixo de 25 unidades", type: "stock", read: false },
   ],
 };
 
@@ -219,6 +233,22 @@ const StockCard = ({ p, properties, applications = [], purchases = [], onEdit, o
     </Card>
   );
 };
+
+const NotifItem = ({ n, onRead }) => (
+  <div style={{ padding: "8px 0", borderBottom: onRead ? "0.5px solid var(--color-border-tertiary)" : "none", fontSize: 13, display: "flex", gap: 8, alignItems: "flex-start" }}>
+    <span>✅</span>
+    <div style={{ flex: 1 }}>
+      {n.type === "application" ? (
+        <>
+          <p style={{ margin: 0, fontWeight: 500 }}>{n.productName}</p>
+          <p style={{ margin: "2px 0 0", color: "var(--color-text-secondary)", fontSize: 12 }}>{n.propertyName + " · " + n.qtyText + " · " + n.month}</p>
+          {(n.at || n.by) && <p style={{ margin: "2px 0 0", color: "var(--color-text-secondary)", fontSize: 11 }}>{"Registrado" + (n.by ? " por " + n.by : "") + (n.at ? " em " + new Date(n.at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "")}</p>}
+        </>
+      ) : <p style={{ margin: 0 }}>{n.msg}</p>}
+    </div>
+    {onRead && <button onClick={onRead} title="Marcar como lida" style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.green }}>✓ Lida</button>}
+  </div>
+);
 
 export default function App() {
   const [tab, setTab] = useState("dashboard");
@@ -319,8 +349,15 @@ export default function App() {
   // Cronograma: separa programações de defensivos e de adubos
   const cronoMatch = (s) => { const pr = data.products.find(p => p.id === s.productId); return cronoFilter === "defensivo" ? isDefensivo(pr?.type) : isAdubo(pr?.type); };
 
-  const unread = data.notifications.filter(n => !n.read).length;
-  const markAllRead = () => { setData(d => ({ ...d, notifications: d.notifications.map(n => ({ ...n, read: true })) })); setNotifOpen(false); };
+  // Notificações: só de aplicações; lidas vão para a aba Histórico (leitura é por usuário)
+  const isRead = (n) => n.read === true || (n.readBy || []).map(String).includes(String(currentUser.id));
+  const notifVisible = data.notifications.filter(n => (n.type === "application" || n.type === "done") && (n.propertyId == null ? isMaster : canSeeProp(n.propertyId)));
+  const byNewest = (a, b) => (b.at || "").localeCompare(a.at || "") || (b.id - a.id);
+  const unreadList = notifVisible.filter(n => !isRead(n)).sort(byNewest);
+  const readList = notifVisible.filter(isRead).sort(byNewest);
+  const unread = unreadList.length;
+  const markRead = (ids) => setData(d => ({ ...d, notifications: d.notifications.map(n => ids.includes(n.id) ? { ...n, readBy: [...new Set([...(n.readBy || []).map(String), String(currentUser.id)])] } : n) }));
+  const markAllRead = () => { markRead(unreadList.map(n => n.id)); setNotifOpen(false); };
 
   const appCost = (a) => {
     const prod = data.products.find(p => p.id === a.productId);
@@ -350,7 +387,7 @@ export default function App() {
       const arr = d[key];
       const idx = arr.findIndex(x => x.id === item.id);
       if (type === "application") {
-        if (idx === -1) return { ...d, applications: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: round2(Math.max(0, num(p.stock) - num(item.qty))) } : p), notifications: [...d.notifications, { id: Date.now()+1, msg: "Aplicação registrada — estoque atualizado", type: "done", read: false }] };
+        if (idx === -1) return { ...d, applications: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: round2(Math.max(0, num(p.stock) - num(item.qty))) } : p), notifications: [...d.notifications, buildAppNotif(item, d, currentUser)] };
         // Edição: devolve a quantidade antiga ao produto antigo e desconta a nova do produto atual
         const old = arr[idx];
         return { ...d, applications: arr.map(x => x.id === item.id ? item : x), products: d.products.map(p => {
@@ -440,6 +477,7 @@ export default function App() {
     { id: "apply",     icon: "💧", label: "Aplicações" },
     { id: "stock",     icon: "📦", label: "Estoque", noOperador: true },
     { id: "reports",   icon: "📈", label: "Relatórios", restricted: true },
+    { id: "history",   icon: "🕘", label: "Histórico" },
     { id: "users",     icon: "👥", label: "Usuários", masterOnly: true },
   ];
 
@@ -449,7 +487,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.13</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.15</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -466,11 +504,8 @@ export default function App() {
             <span style={{ fontWeight: 500, fontSize: 14 }}>Notificações</span>
             <button onClick={markAllRead} style={{ fontSize: 12, color: COLORS.green, background: "none", border: "none", cursor: "pointer" }}>Marcar lidas</button>
           </div>
-          {data.notifications.map(n => (
-            <div key={n.id} style={{ padding: "8px 0", borderBottom: "0.5px solid var(--color-border-tertiary)", fontSize: 13, color: n.read ? "var(--color-text-secondary)" : "var(--color-text-primary)", display: "flex", gap: 8 }}>
-              <span>{n.type === "schedule" ? "📅" : n.type === "stock" ? "📦" : "✅"}</span><span>{n.msg}</span>
-            </div>
-          ))}
+          {unreadList.length === 0 && <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "4px 0" }}>Nenhuma notificação nova. As lidas ficam na aba 🕘 Histórico.</p>}
+          {unreadList.map(n => <NotifItem key={n.id} n={n} onRead={() => markRead([n.id])} />)}
         </Card>
       )}
 
@@ -760,6 +795,16 @@ export default function App() {
         )}
 
         {/* USUÁRIOS */}
+        {tab === "history" && (
+          <div>
+            <p style={{ fontWeight: 500, fontSize: 16, margin: "0 0 4px" }}>Histórico</p>
+            <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "0 0 12px" }}>Notificações de aplicações já lidas</p>
+            {readList.length === 0
+              ? <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma notificação lida ainda.</p>
+              : readList.map(n => <Card key={n.id} style={{ marginBottom: 8 }}><NotifItem n={n} /></Card>)}
+          </div>
+        )}
+
         {tab === "users" && canManageUsers(currentUser.role) && (
           <UserManager users={users} setUsers={setUsers} properties={data.properties} currentUser={currentUser} />
         )}
@@ -900,6 +945,10 @@ function FormModal({ modal, data, onClose, onSave }) {
   const [form, setForm] = useState(() => {
     const it = { ...(modal.item || {}) };
     // Aplicação de adubo: converte kg em sacos para preencher o campo "Quantidade de sacos"
+    if (modal.type === "schedule" && it.productId && !it.schedType) {
+      const prS = data.products.find(p => p.id === Number(it.productId));
+      if (prS) it.schedType = prS.type;
+    }
     if (modal.type === "application" && it.productId && !it.appType) {
       const pr0 = data.products.find(p => p.id === Number(it.productId));
       if (pr0) it.appType = pr0.type;
@@ -948,6 +997,7 @@ function FormModal({ modal, data, onClose, onSave }) {
     } else if (modal.type === "product") {
       onSave("product", { ...base, activeIngredient: isDefensivo(form.type) ? (form.activeIngredient || "").trim() : null, dosePerHa: Number(form.dosePerHa) || 0, bagWeight: form.bagWeight ? Number(form.bagWeight) : null });
     } else if (modal.type === "schedule") {
+      delete base.schedType;
       onSave("schedule", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), qty: form.qty ? Number(form.qty) : null, months });
     } else if (modal.type === "property") {
       onSave("property", { ...base, area: Number(form.area) });
@@ -1042,7 +1092,25 @@ function FormModal({ modal, data, onClose, onSave }) {
     );
     if (modal.type === "schedule") return (
       <div>
-        {sel("Produto", "productId", data.products.map(p => ({ value: p.id, label: p.name })))}
+        {sel("Tipo de produto", "schedType", PRODUCT_TYPES.map(t => ({ value: t, label: t })))}
+        {sel("Produto", "productId", data.products
+          .filter(p => !form.schedType || p.type === form.schedType || p.id === Number(form.productId))
+          .slice().sort(byName)
+          .map(p => ({ value: p.id, label: p.name + (p.activeIngredient ? " · " + p.activeIngredient : "") })))}
+        {(() => {
+          // Mostra a dose por hectare do produto escolhido (quando cadastrada)
+          const prD = data.products.find(p => p.id === Number(form.productId));
+          if (!prD || !(num(prD.dosePerHa) > 0)) return null;
+          const propD = data.properties.find(p => p.id === Number(form.propertyId));
+          const tot = propD ? num(prD.dosePerHa) * num(propD.area) : null;
+          const sc = tot ? sacosFor(prD, tot) : null;
+          return (
+            <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "8px 12px", margin: "-6px 0 14px" }}>
+              <p style={{ margin: 0, fontSize: 12, color: "#fff", fontWeight: 500 }}>{"Dose: " + prD.dosePerHa + " " + prD.unit + "/ha"}</p>
+              {tot !== null && <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(255,255,255,0.85)" }}>{"Para " + propD.name + " (" + propD.area + " ha): " + round2(tot) + " " + prD.unit + (sc !== null ? " · " + sc + " sacos" : "")}</p>}
+            </div>
+          );
+        })()}
         {sel("Propriedade", "propertyId", data.properties.map(p => ({ value: p.id, label: p.name })))}
         {(() => {
           const pr = data.products.find(p => p.id === Number(form.productId));
