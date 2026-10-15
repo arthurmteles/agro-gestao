@@ -382,6 +382,8 @@ export default function App() {
   const isOperador = currentUser.role === "operador";
   // Estoque: só o Master cadastra/edita; Operador e Leitura apenas visualizam
   const stockRO = !isMaster;
+  // Perfil Leitura: só visualiza (sem registrar, editar ou excluir em nenhuma aba)
+  const isLeitura = currentUser.role === "leitura";
   // Relatórios (com download): Master e Leitura
   const canSeeReports = isMaster || currentUser.role === "leitura";
   const allowedIds = (() => {
@@ -433,6 +435,7 @@ export default function App() {
   };
 
   const save = (type, item) => {
+    if (isLeitura) { setModal(null); return; }
     setData(d => {
       const key = { application:"applications", purchase:"purchases", product:"products", schedule:"schedules", property:"properties" }[type];
       const arr = d[key];
@@ -464,6 +467,7 @@ export default function App() {
   };
 
   const del = (type, id) => {
+    if (isLeitura) { setConfirm(null); return; }
     const key = { application:"applications", purchase:"purchases", product:"products", schedule:"schedules", property:"properties" }[type];
     if (type === "application") {
       // Excluir aplicação: devolve a quantidade ao estoque do produto
@@ -538,7 +542,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.16</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.17</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -623,7 +627,7 @@ export default function App() {
                         ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>✓ 100%</span>
                         : semEstoque
                           ? <span style={{ fontSize: 12, color: COLORS.red, background: COLORS.redLight, padding: "4px 10px", borderRadius: 20 }}>Sem estoque</span>
-                          : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: pr?.area, qty: ((planned - applied) > 0 ? (planned - applied).toFixed(1) : ""), date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                          : isLeitura ? null : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: pr?.area, qty: ((planned - applied) > 0 ? (planned - applied).toFixed(1) : ""), date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>
                             {pct > 0 ? "Completar" : "Registrar"}
                           </button>}
                     </div>
@@ -667,7 +671,7 @@ export default function App() {
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Cronograma</p>
-              <button onClick={() => setModal({ type: "schedule", item: {} })} style={{ fontSize: 13, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer" }}>+ Programar</button>
+              {!isLeitura && <button onClick={() => setModal({ type: "schedule", item: {} })} style={{ fontSize: 13, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer" }}>+ Programar</button>}
             </div>
             <select value={curProp} onChange={e => setSelectedProp(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               {vd.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -710,13 +714,13 @@ export default function App() {
                         {!done && <p style={{ fontSize: 12, color: semEstoque ? COLORS.red : COLORS.teal, margin: "4px 0 0", fontWeight: 500 }}>{"Estoque: " + (prod?.stock || 0) + " " + prod?.unit + (semEstoque ? " ⚠️" : "")}</p>}
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <button onClick={() => setModal({ type: "schedule", item: { ...s } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer" }}>✏️</button>
-                        <button onClick={() => setConfirm({ type: "schedule", id: s.id, label: prod?.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
+                        {!isLeitura && <button onClick={() => setModal({ type: "schedule", item: { ...s } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer" }}>✏️</button>}
+                        {!isLeitura && <button onClick={() => setConfirm({ type: "schedule", id: s.id, label: prod?.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>}
                         {done
                           ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>✓ 100%</span>
                           : semEstoque
                             ? <span style={{ fontSize: 11, color: COLORS.red, background: COLORS.redLight, padding: "4px 8px", borderRadius: 20 }}>Sem estoque</span>
-                            : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: remaining.toFixed(1), date: regDate } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>{pct > 0 ? "Completar" : "Registrar"}</button>}
+                            : isLeitura ? null : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: remaining.toFixed(1), date: regDate } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>{pct > 0 ? "Completar" : "Registrar"}</button>}
                       </div>
                     </div>
                     <div style={{ marginTop: 10 }}>
@@ -741,7 +745,7 @@ export default function App() {
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Aplicações</p>
-              <button onClick={() => setModal({ type: "application", item: {} })} style={{ fontSize: 13, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer" }}>+ Registrar</button>
+              {!isLeitura && <button onClick={() => setModal({ type: "application", item: {} })} style={{ fontSize: 13, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer" }}>+ Registrar</button>}
             </div>
             <select value={appPropFilter} onChange={e => setAppPropFilter(Number(e.target.value))} style={{ width: "100%", marginBottom: 10, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               <option value={0}>Todas as propriedades</option>
@@ -782,8 +786,8 @@ export default function App() {
                         {a.notes && <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>{a.notes}</p>}
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <button onClick={() => setModal({ type: "application", item: { ...a } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
-                        <button onClick={() => setConfirm({ type: "application", id: a.id, label: prod?.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
+                        {!isLeitura && <button onClick={() => setModal({ type: "application", item: { ...a } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>}
+                        {!isLeitura && <button onClick={() => setConfirm({ type: "application", id: a.id, label: prod?.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>}
                       </div>
                     </div>
                   </Card>
