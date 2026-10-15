@@ -213,8 +213,8 @@ const StockCard = ({ p, properties, applications = [], purchases = [], onEdit, o
           <p style={{ fontWeight: 500, margin: 0, fontSize: 16, color: bar }}>{p.stock} {p.unit}</p>
           <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: 0 }}>{isAdubo(p.type) && p.bagWeight ? fmtSacos(stockNow / p.bagWeight) + " sacos" : "~" + mLeft + " meses"}</p>
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={onEdit} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
-            <button onClick={onDelete} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
+            {onEdit && <button onClick={onEdit} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>}
+            {onDelete && <button onClick={onDelete} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>}
           </div>
         </div>
       </div>
@@ -250,6 +250,52 @@ const NotifItem = ({ n, onRead }) => (
   </div>
 );
 
+// Troca de senha do próprio usuário (confere a senha atual antes de gravar)
+const PasswordModal = ({ user, onSave, onClose }) => {
+  const [f, setF] = useState({ cur: "", nova: "", conf: "" });
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState(false);
+  const field = (label, key) => (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ fontSize: 13, color: "#fff", fontWeight: 700, display: "block", marginBottom: 6 }}>{label}</label>
+      <input type="password" value={f[key]} onChange={e => { setF({ ...f, [key]: e.target.value }); setErr(""); }} autoComplete={key === "cur" ? "current-password" : "new-password"}
+        style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, fontSize: 14, background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff" }} />
+    </div>
+  );
+  const submit = () => {
+    if (hashPassword(f.cur) !== user.password) return setErr("Senha atual incorreta.");
+    if (f.nova.length < 4) return setErr("A nova senha precisa ter pelo menos 4 caracteres.");
+    if (f.nova !== f.conf) return setErr("A confirmação não confere com a nova senha.");
+    if (f.nova === f.cur) return setErr("A nova senha é igual à atual.");
+    onSave(hashPassword(f.nova)); setOk(true);
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 150, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ background: COLORS.green, borderRadius: "20px 20px 0 0", padding: "1.5rem 1.25rem 2rem", width: "100%", maxWidth: 420 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <p style={{ fontWeight: 500, fontSize: 17, margin: 0, color: "#fff" }}>Alterar senha</p>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "50%", width: 32, height: 32, fontSize: 16, cursor: "pointer", color: "#fff" }}>✕</button>
+        </div>
+        {ok ? (
+          <>
+            <p style={{ color: "#fff", fontSize: 14, margin: "0 0 16px" }}>✅ Senha alterada. Use a nova senha no próximo login.</p>
+            <button onClick={onClose} style={{ width: "100%", background: "#fff", color: COLORS.green, border: "none", borderRadius: 12, padding: 14, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>Fechar</button>
+          </>
+        ) : (
+          <>
+            <p style={{ color: "rgba(255,255,255,0.85)", fontSize: 12, margin: "0 0 12px" }}>{"Usuário: " + user.username}</p>
+            {field("Senha atual", "cur")}
+            {field("Nova senha", "nova")}
+            {field("Confirmar nova senha", "conf")}
+            {err && <p style={{ background: "rgba(163,45,45,0.4)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#fff", margin: "0 0 12px" }}>{"⚠️ " + err}</p>}
+            <button onClick={submit} style={{ width: "100%", background: "#fff", color: COLORS.green, border: "none", borderRadius: 12, padding: 14, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>Salvar nova senha</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [data, setData] = useState(initData);
@@ -257,6 +303,7 @@ export default function App() {
   const [selectedProp, setSelectedProp] = useState(1);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [notifOpen, setNotifOpen] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [stockFilter, setStockFilter] = useState("defensivo");
@@ -333,6 +380,10 @@ export default function App() {
   // Master vê tudo; Operador/Leitura veem só as propriedades liberadas no cadastro do usuário
   const isMaster = currentUser.role === "master";
   const isOperador = currentUser.role === "operador";
+  // Estoque: só o Master cadastra/edita; Operador e Leitura apenas visualizam
+  const stockRO = !isMaster;
+  // Relatórios (com download): Master e Leitura
+  const canSeeReports = isMaster || currentUser.role === "leitura";
   const allowedIds = (() => {
     let pr = currentUser.properties;
     if (typeof pr === "string" && pr !== "all") { try { pr = JSON.parse(pr); } catch { pr = []; } }
@@ -475,7 +526,7 @@ export default function App() {
     { id: "dashboard", icon: "📊", label: "Início" },
     { id: "calendar",  icon: "📅", label: "Cronograma" },
     { id: "apply",     icon: "💧", label: "Aplicações" },
-    { id: "stock",     icon: "📦", label: "Estoque", noOperador: true },
+    { id: "stock",     icon: "📦", label: "Estoque" },
     { id: "reports",   icon: "📈", label: "Relatórios", restricted: true },
     { id: "history",   icon: "🕘", label: "Histórico" },
     { id: "users",     icon: "👥", label: "Usuários", masterOnly: true },
@@ -487,13 +538,14 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.15</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.16</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setNotifOpen(!notifOpen)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 12px", color: "#fff", cursor: "pointer", fontSize: 14, position: "relative" }}>
             🔔{unread > 0 && <span style={{ background: COLORS.red, color: "#fff", borderRadius: 10, fontSize: 10, padding: "1px 5px", position: "absolute", top: 2, right: 2 }}>{unread}</span>}
           </button>
+          <button onClick={() => setPwOpen(true)} title="Alterar senha" style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 10px", color: "#fff", cursor: "pointer", fontSize: 14 }}>🔑</button>
           <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "6px 12px", color: "#fff", cursor: "pointer", fontSize: 13 }}>Sair</button>
         </div>
       </div>
@@ -522,9 +574,7 @@ export default function App() {
               <MetricCard label="Propriedades" value={vd.properties.length} sub="cadastradas" />
               <MetricCard label="Produtos" value={data.products.length} sub="no portfólio" />
               <MetricCard label="Aplicações" value={vd.applications.length} sub="registradas" />
-              {isOperador
-                ? <MetricCard label="Programações" value={vd.schedules.length} sub="no cronograma" />
-                : <MetricCard label="Est. crítico" value={data.products.filter(p => p.stock < p.dosePerHa * 20).length} sub="produtos" color={COLORS.red} />}
+              <MetricCard label="Est. crítico" value={data.products.filter(p => p.stock < p.dosePerHa * 20).length} sub="produtos" color={COLORS.red} />
             </div>
 
             <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{isMaster ? "Propriedades cadastradas" : "Sua propriedade"}</p>
@@ -592,7 +642,7 @@ export default function App() {
               });
             })()}
 
-            {!isOperador && (<>
+            {(<>
             <p style={{ fontWeight: 500, fontSize: 14, margin: "20px 0 8px" }}>Estoque crítico</p>
             {data.products.filter(p => p.stock < p.dosePerHa * 20).map(p => (
               <Card key={p.id} style={{ marginBottom: 8, borderLeft: "3px solid " + (p.stock <= 0 ? COLORS.red : COLORS.amber), borderRadius: "0 12px 12px 0" }}>
@@ -744,14 +794,14 @@ export default function App() {
         )}
 
         {/* ESTOQUE */}
-        {tab === "stock" && currentUser.role !== "operador" && (
+        {tab === "stock" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Estoque</p>
-              <div style={{ display: "flex", gap: 6 }}>
+              {stockRO ? <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>👁 Somente visualização</span> : <div style={{ display: "flex", gap: 6 }}>
                 <button onClick={() => setModal({ type: "purchase", item: {} })} style={{ fontSize: 12, background: COLORS.teal, color: "#fff", border: "none", borderRadius: 20, padding: "5px 12px", cursor: "pointer" }}>+ Compra</button>
                 <button onClick={() => setModal({ type: "product", item: {} })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 12px", cursor: "pointer" }}>+ Produto</button>
-              </div>
+              </div>}
             </div>
             <PillTabs tabs={[{ id: "defensivo", label: "💊 Defensivos" }, { id: "adubo", label: "🌾 Adubos" }]} value={stockFilter} onChange={setStockFilter} />
             {stockFilter === "defensivo" && (
@@ -765,8 +815,8 @@ export default function App() {
               .slice().sort(byStockKey)
               .map(p => (
               <StockCard key={p.id} p={p} properties={vd.properties} applications={data.applications} purchases={data.purchases}
-                onEdit={() => setModal({ type: "product", item: { ...p } })}
-                onDelete={() => setConfirm({ type: "product", id: p.id, label: p.name })} />
+                onEdit={stockRO ? null : () => setModal({ type: "product", item: { ...p } })}
+                onDelete={stockRO ? null : () => setConfirm({ type: "product", id: p.id, label: p.name })} />
             ))}
             <SectionTitle>Histórico de compras</SectionTitle>
             {/* Filtro por tipo */}
@@ -785,8 +835,8 @@ export default function App() {
                   <div><p style={{ margin: 0, fontWeight: 500 }}>{prod.name}</p><p style={{ margin: 0, color: "var(--color-text-secondary)", fontSize: 12 }}>{c.date + " · " + c.qty + " " + prod.unit}</p></div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <p style={{ margin: 0, color: COLORS.teal, fontWeight: 500 }}>{"R$ " + (c.totalCost || 0).toLocaleString("pt-BR")}</p>
-                    <button onClick={() => setModal({ type: "purchase", item: { ...c } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
-                    <button onClick={() => setConfirm({ type: "purchase", id: c.id, label: prod.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>
+                    {!stockRO && <><button onClick={() => setModal({ type: "purchase", item: { ...c } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
+                    <button onClick={() => setConfirm({ type: "purchase", id: c.id, label: prod.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button></>}
                   </div>
                 </div>
               );
@@ -810,7 +860,7 @@ export default function App() {
         )}
 
         {/* RELATÓRIOS */}
-        {tab === "reports" && canViewReports(currentUser.role) && (
+        {tab === "reports" && canSeeReports && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Relatórios</p>
@@ -910,6 +960,8 @@ export default function App() {
       </div>
 
       {modal && <FormModal modal={modal} data={vd} onClose={() => setModal(null)} onSave={save} />}
+      {pwOpen && <PasswordModal user={users.find(u => String(u.id) === String(currentUser.id)) || currentUser} onClose={() => setPwOpen(false)}
+        onSave={(hash) => { setUsers(us => us.map(u => String(u.id) === String(currentUser.id) ? { ...u, password: hash } : u)); setCurrentUser(cu => ({ ...cu, password: hash })); }} />}
 
       {confirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -927,8 +979,7 @@ export default function App() {
       <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 420, background: "var(--color-background-primary)", borderTop: "0.5px solid var(--color-border-tertiary)", display: "flex" }}>
         {navItems
           .filter(n => !n.masterOnly || canManageUsers(currentUser.role))
-          .filter(n => !n.restricted || canViewReports(currentUser.role))
-          .filter(n => !n.noOperador || currentUser.role !== "operador")
+          .filter(n => !n.restricted || canSeeReports)
           .map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, padding: "8px 2px 12px", border: "none", background: "none", cursor: "pointer", color: tab === n.id ? COLORS.green : "var(--color-text-secondary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
               <span style={{ fontSize: 18 }}>{n.icon}</span>
