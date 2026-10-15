@@ -26,6 +26,11 @@ const unitPrice = (p, purchases = []) => {
   return num(p?.price);
 };
 const brl = (v) => "R$ " + num(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Defensivos: ordena pelo princípio ativo (sem princípio ativo, usa o nome)
+const stockKey = (p) => (isDefensivo(p.type) && p.activeIngredient ? p.activeIngredient : p.name) || "";
+const byStockKey = (a, b) => stockKey(a).localeCompare(stockKey(b), "pt-BR", { sensitivity: "base" }) || (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
+// Índice do mês atual dentro de APP_MONTHS (ou 0 se fora do período)
+const currentAppMonthIdx = () => { const n = new Date(); const i = APP_MONTHS.findIndex(m => m.month === n.getMonth() && m.year === n.getFullYear()); return i < 0 ? 0 : i; };
 const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
 // Aplicação sem data válida (registros antigos)
 const hasDate = (a) => !!a.date && !isNaN(new Date(a.date + "T12:00").getTime());
@@ -189,7 +194,7 @@ const StockCard = ({ p, properties, applications = [], purchases = [], onEdit, o
   return (
     <Card style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-        <div><p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{p.name}{isDefensivo(p.type) && p.activeIngredient && <span style={{ fontWeight: 400, color: "var(--color-text-secondary)" }}>{" · " + p.activeIngredient}</span>}</p><Badge label={p.type} type={p.type} /></div>
+        <div><p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{isDefensivo(p.type) && p.activeIngredient && <span style={{ fontWeight: 400, color: "var(--color-text-secondary)" }}>{p.activeIngredient + " · "}</span>}{p.name}</p><Badge label={p.type} type={p.type} /></div>
         <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
           <p style={{ fontWeight: 500, margin: 0, fontSize: 16, color: bar }}>{p.stock} {p.unit}</p>
           <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: 0 }}>{isAdubo(p.type) && p.bagWeight ? fmtSacos(stockNow / p.bagWeight) + " sacos" : "~" + mLeft + " meses"}</p>
@@ -228,7 +233,8 @@ export default function App() {
   const [defTypeFilter, setDefTypeFilter] = useState("");
   const [appFilter, setAppFilter] = useState("defensivo");
   const [appPropFilter, setAppPropFilter] = useState(0);
-  const [appMonthIdx, setAppMonthIdx] = useState(0);
+  const [appMonthIdx, setAppMonthIdx] = useState(currentAppMonthIdx);
+  const [cronoFilter, setCronoFilter] = useState("defensivo");
   const [calMonthIdx, setCalMonthIdx] = useState(() => {
     const n = new Date();
     const i = SCHED_MONTHS.findIndex(m => m.month === n.getMonth() && m.year === n.getFullYear());
@@ -310,6 +316,8 @@ export default function App() {
     applications: data.applications.filter(a => canSeeProp(a.propertyId)),
   } : data;
   const curProp = vd.properties.some(p => p.id === selectedProp) ? selectedProp : vd.properties[0]?.id;
+  // Cronograma: separa programações de defensivos e de adubos
+  const cronoMatch = (s) => { const pr = data.products.find(p => p.id === s.productId); return cronoFilter === "defensivo" ? isDefensivo(pr?.type) : isAdubo(pr?.type); };
 
   const unread = data.notifications.filter(n => !n.read).length;
   const markAllRead = () => { setData(d => ({ ...d, notifications: d.notifications.map(n => ({ ...n, read: true })) })); setNotifOpen(false); };
@@ -441,7 +449,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.12</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.13</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -581,14 +589,15 @@ export default function App() {
             </select>
             <select value={calMonthIdx} onChange={e => setCalMonthIdx(Number(e.target.value))} style={{ width: "100%", marginBottom: 16, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
               {SCHED_MONTHS.map((m, i) => {
-                const has = vd.schedules.some(s => s.propertyId === curProp && s.months.includes(m.month + 1));
+                const has = vd.schedules.some(s => s.propertyId === curProp && s.months.includes(m.month + 1) && cronoMatch(s));
                 return <option key={m.label} value={i}>{m.label + (has ? " •" : "")}</option>;
               })}
             </select>
+            <PillTabs tabs={[{ id: "defensivo", label: "💊 Defensivos" }, { id: "adubo", label: "🌾 Adubos" }]} value={cronoFilter} onChange={setCronoFilter} />
             <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 8px" }}>{"Aplicações em " + SCHED_MONTHS[calMonthIdx].label}</p>
             {(() => {
               const area = propSel?.area || 1;
-              const items = vd.schedules.filter(s => s.propertyId === curProp && s.months.includes(SCHED_MONTHS[calMonthIdx].month + 1));
+              const items = vd.schedules.filter(s => s.propertyId === curProp && s.months.includes(SCHED_MONTHS[calMonthIdx].month + 1) && cronoMatch(s));
               if (!items.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Nenhuma aplicação neste mês.</p>;
               return items.map(s => {
                 const prod = data.products.find(p => p.id === s.productId);
@@ -654,7 +663,7 @@ export default function App() {
               {vd.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <select value={appMonthIdx} onChange={e => setAppMonthIdx(Number(e.target.value))} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
-              {APP_MONTHS.map((m, i) => <option key={i} value={i}>{m.label}</option>)}
+              {(() => { const c = currentAppMonthIdx(); return [c, ...APP_MONTHS.map((_, i) => i).filter(i => i !== c)]; })().map(i => <option key={i} value={i}>{APP_MONTHS[i].label + (i === currentAppMonthIdx() ? " (mês atual)" : "")}</option>)}
               <option value={-1}>{"Sem data de aplicação (" + vd.applications.filter(a => !hasDate(a)).length + ")"}</option>
             </select>
             <PillTabs tabs={[{ id: "defensivo", label: "💊 Defensivos" }, { id: "adubo", label: "🌾 Adubos" }]} value={appFilter} onChange={setAppFilter} />
@@ -718,7 +727,7 @@ export default function App() {
             )}
             {data.products
               .filter(p => stockFilter === "defensivo" ? isDefensivo(p.type) && (!defTypeFilter || p.type === defTypeFilter) : isAdubo(p.type))
-              .slice().sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" }))
+              .slice().sort(byStockKey)
               .map(p => (
               <StockCard key={p.id} p={p} properties={vd.properties} applications={data.applications} purchases={data.purchases}
                 onEdit={() => setModal({ type: "product", item: { ...p } })}
