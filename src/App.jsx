@@ -47,6 +47,11 @@ const buildAppNotif = (item, d, user) => {
     msg: (pr?.name || "Produto") + " · " + (prop?.name || "") + " · " + qtyText + " · " + monthLabel(item.date),
   };
 };
+// Destaque para número de sacos
+const SacosChip = ({ n, tone = "green" }) => (
+  <span style={{ display: "inline-block", fontWeight: 700, fontSize: 14, padding: "1px 8px", borderRadius: 12, whiteSpace: "nowrap",
+    background: tone === "amber" ? COLORS.amberLight : COLORS.greenLight, color: tone === "amber" ? COLORS.amber : COLORS.green }}>{n + " sacos"}</span>
+);
 const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
 // Aplicação sem data válida (registros antigos)
 const hasDate = (a) => !!a.date && !isNaN(new Date(a.date + "T12:00").getTime());
@@ -542,7 +547,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.17</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.18</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -709,9 +714,6 @@ export default function App() {
                       <div style={{ flex: 1 }}>
                         <p style={{ fontWeight: 500, margin: "0 0 4px", fontSize: 14 }}>{prod?.name}</p>
                         <Badge label={prod?.type} type={prod?.type} />
-                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "6px 0 0" }}>{(s.qty ? "Qtd/mês: " : "Dose: " + prod?.dosePerHa + " " + prod?.unit + "/ha · Total: ") + totalQty + " " + prod?.unit + (sacos !== null ? " · Sacos: " + sacos : "")}</p>
-                        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>{s.notes}</p>
-                        {!done && <p style={{ fontSize: 12, color: semEstoque ? COLORS.red : COLORS.teal, margin: "4px 0 0", fontWeight: 500 }}>{"Estoque: " + (prod?.stock || 0) + " " + prod?.unit + (semEstoque ? " ⚠️" : "")}</p>}
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         {!isLeitura && <button onClick={() => setModal({ type: "schedule", item: { ...s } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 16, padding: "4px 8px", cursor: "pointer" }}>✏️</button>}
@@ -723,15 +725,25 @@ export default function App() {
                             : isLeitura ? null : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: remaining.toFixed(1), date: regDate } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>{pct > 0 ? "Completar" : "Registrar"}</button>}
                       </div>
                     </div>
+                    <p style={{ fontSize: 14, color: "var(--color-text-primary)", margin: "6px 0 0", lineHeight: 1.6 }}>{(s.qty ? "Qtd/mês: " : "Dose: " + prod?.dosePerHa + " " + prod?.unit + "/ha · Total: ") }<strong>{totalQty + " " + prod?.unit}</strong>{sacos !== null && <>{" "}<SacosChip n={sacos} /></>}</p>
+                    {s.notes && <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>{s.notes}</p>}
+                    {!done && <p style={{ fontSize: 13, color: semEstoque ? COLORS.red : COLORS.teal, margin: "4px 0 0", fontWeight: 500 }}>{"Estoque: " + (prod?.stock || 0) + " " + prod?.unit + (semEstoque ? " ⚠️" : "")}</p>}
                     <div style={{ marginTop: 10 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 3 }}>
-                        <span>Realizado: <strong style={{ color: pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : "var(--color-text-secondary)" }}>{applied.toFixed(1)} {prod?.unit}</strong>{sacosFor(prod, applied) !== null && applied > 0 ? " (" + sacosFor(prod, applied) + " sacos)" : ""}</span>
-                        <span style={{ fontWeight: 600, color: pct > 0 ? barColor : "var(--color-text-secondary)" }}>{pct.toFixed(0)}%</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+                        <span>Realizado: <strong style={{ color: pct >= 100 ? COLORS.green : pct > 0 ? COLORS.amber : "var(--color-text-secondary)" }}>{applied.toFixed(1)} {prod?.unit}</strong>{isAdubo(prod?.type) && prod?.bagWeight && applied > 0 ? <strong style={{ color: "var(--color-text-primary)" }}>{" (" + fmtSacos(applied / prod.bagWeight) + " sacos)"}</strong> : ""}</span>
+                        <span style={{ fontWeight: 700, fontSize: 14, color: pct > 0 ? barColor : "var(--color-text-secondary)" }}>{pct.toFixed(0)}%</span>
                       </div>
-                      <div style={{ background: "var(--color-background-secondary)", borderRadius: 4, height: 6 }}>
+                      <div style={{ background: "var(--color-background-secondary)", borderRadius: 4, height: 8 }}>
                         <div style={{ width: pct + "%", background: barColor, height: "100%", borderRadius: 4, transition: "width 0.3s" }} />
                       </div>
-                      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "3px 0 0" }}>Planejado: {planned.toFixed(1)} {prod?.unit}{!done && applied > 0 ? " · Falta: " + remaining.toFixed(1) + " " + prod?.unit : ""}</p>
+                      <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "4px 0 0" }}>Planejado: <strong style={{ color: "var(--color-text-primary)" }}>{planned.toFixed(1)} {prod?.unit}</strong>{sacos !== null ? " (" + sacos + " sacos)" : ""}</p>
+                      {!done && remaining > 0 && (
+                        <p style={{ fontSize: 14, margin: "6px 0 0", lineHeight: 1.6 }}>
+                          <span style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>Falta aplicar: </span>
+                          <strong style={{ color: COLORS.amber }}>{remaining.toFixed(1) + " " + prod?.unit}</strong>
+                          {sacosFor(prod, remaining) !== null && <>{" "}<SacosChip n={sacosFor(prod, remaining)} tone="amber" /></>}
+                        </p>
+                      )}
                     </div>
                   </Card>
                 );
