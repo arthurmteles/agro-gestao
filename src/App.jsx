@@ -52,6 +52,38 @@ const SacosChip = ({ n, tone = "green" }) => (
   <span style={{ display: "inline-block", fontWeight: 700, fontSize: 14, padding: "1px 8px", borderRadius: 12, whiteSpace: "nowrap",
     background: tone === "amber" ? COLORS.amberLight : COLORS.greenLight, color: tone === "amber" ? COLORS.amber : COLORS.green }}>{n + " sacos"}</span>
 );
+// ── Estoque por propriedade ─────────────────────────────────────
+// p.stockByProp = { "<id da propriedade>": qtd, none: qtd }  ("none" = Não alocado / estoque geral)
+// p.stock continua sendo o TOTAL (soma), usado em alertas e relatórios.
+// Produtos antigos (sem stockByProp) têm todo o saldo em "Não alocado".
+const NONE = "none";
+const bucketKey = (propId) => (propId == null || propId === "" || propId === NONE ? NONE : String(propId));
+const sbp = (p) => (p && p.stockByProp ? { ...p.stockByProp } : { [NONE]: num(p?.stock) });
+const stockAt = (p, propId) => num(sbp(p)[bucketKey(propId)]);
+const withSbp = (p, map) => {
+  const clean = {};
+  Object.keys(map).forEach(k => { const v = round2(num(map[k])); if (v > 0) clean[k] = v; });
+  return { ...p, stockByProp: clean, stock: round2(Object.values(clean).reduce((t, v) => t + v, 0)) };
+};
+const addStock = (p, propId, delta) => { const m = sbp(p); const k = bucketKey(propId); m[k] = Math.max(0, num(m[k]) + num(delta)); return withSbp(p, m); };
+// Aplicação: tira primeiro da propriedade; se faltar, completa com o "Não alocado"
+const takeForApp = (p, propId, qty) => {
+  const m = sbp(p); const k = bucketKey(propId);
+  let rest = num(qty); const fromProp = Math.min(num(m[k]), rest); rest -= fromProp;
+  const fromNone = k === NONE ? 0 : Math.min(num(m[NONE]), rest);
+  m[k] = num(m[k]) - fromProp; if (k !== NONE) m[NONE] = num(m[NONE]) - fromNone;
+  const takenFrom = {}; if (fromProp > 0) takenFrom[k] = round2(fromProp); if (fromNone > 0) takenFrom[NONE] = round2(fromNone);
+  return { p: withSbp(p, m), takenFrom };
+};
+// Devolve ao estoque de onde saiu (aplicações antigas, sem registro, voltam para "Não alocado")
+const giveBack = (p, app) => {
+  const m = sbp(p);
+  const tf = app.takenFrom && Object.keys(app.takenFrom).length ? app.takenFrom : { [NONE]: num(app.qty) };
+  Object.keys(tf).forEach(k => { m[k] = num(m[k]) + num(tf[k]); });
+  return withSbp(p, m);
+};
+const bucketName = (k, properties) => k === NONE ? "Não alocado" : (properties.find(pr => String(pr.id) === String(k))?.name || "Propriedade removida");
+const fmtQty = (p, q) => round2(q) + " " + (p?.unit || "") + (isAdubo(p?.type) && p?.bagWeight ? " (" + fmtSacos(num(q) / p.bagWeight) + " sacos)" : "");
 const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
 // Aplicação sem data válida (registros antigos)
 const hasDate = (a) => !!a.date && !isNaN(new Date(a.date + "T12:00").getTime());
@@ -223,6 +255,23 @@ const StockCard = ({ p, properties, applications = [], purchases = [], onEdit, o
           </div>
         </div>
       </div>
+      {(() => {
+        // Saldo por propriedade (só as que o usuário enxerga) + Não alocado
+        const rows = [...properties.map(pr => ({ k: String(pr.id), name: pr.name })), { k: NONE, name: "Não alocado" }]
+          .map(r => ({ ...r, q: stockAt(p, r.k) })).filter(r => r.q > 0);
+        return (
+          <div style={{ background: "var(--color-background-secondary)", borderRadius: 8, padding: "6px 10px", margin: "0 0 8px" }}>
+            {rows.length === 0
+              ? <p style={{ margin: 0, fontSize: 12, color: "var(--color-text-secondary)" }}>Sem saldo nas propriedades</p>
+              : rows.map(r => (
+                <div key={r.k} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, padding: "2px 0" }}>
+                  <span style={{ color: r.k === NONE ? COLORS.amber : "var(--color-text-secondary)" }}>{r.name}</span>
+                  <strong style={{ whiteSpace: "nowrap" }}>{fmtQty(p, r.q)}</strong>
+                </div>
+              ))}
+          </div>
+        );
+      })()}
       <div style={{ background: "var(--color-background-secondary)", borderRadius: 4, height: 6 }}>
         <div style={{ width: pct + "%", background: COLORS.green, height: "100%", borderRadius: 4, transition: "width 0.3s" }} />
       </div>
@@ -446,28 +495,41 @@ export default function App() {
       const arr = d[key];
       const idx = arr.findIndex(x => x.id === item.id);
       if (type === "application") {
-        if (idx === -1) return { ...d, applications: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: round2(Math.max(0, num(p.stock) - num(item.qty))) } : p), notifications: [...d.notifications, buildAppNotif(item, d, currentUser)] };
-        // Edição: devolve a quantidade antiga ao produto antigo e desconta a nova do produto atual
-        const old = arr[idx];
-        return { ...d, applications: arr.map(x => x.id === item.id ? item : x), products: d.products.map(p => {
-          let st = num(p.stock);
-          if (p.id === old.productId) st += num(old.qty);
-          if (p.id === item.productId) st -= num(item.qty);
-          return (p.id === old.productId || p.id === item.productId) ? { ...p, stock: round2(Math.max(0, st)) } : p;
-        }) };
+        let products = d.products;
+        // Edição: devolve primeiro o que a versão antiga tinha tirado
+        const old = idx === -1 ? null : arr[idx];
+        if (old) products = products.map(p => p.id === old.productId ? giveBack(p, old) : p);
+        let takenFrom = {};
+        products = products.map(p => { if (p.id !== item.productId) return p; const r = takeForApp(p, item.propertyId, item.qty); takenFrom = r.takenFrom; return r.p; });
+        const it2 = { ...item, takenFrom };
+        if (!old) return { ...d, applications: [...arr, it2], products, notifications: [...d.notifications, buildAppNotif(it2, d, currentUser)] };
+        return { ...d, applications: arr.map(x => x.id === item.id ? it2 : x), products };
       }
       if (type === "purchase") {
-        if (idx === -1) return { ...d, purchases: [...arr, item], products: d.products.map(p => p.id === item.productId ? { ...p, stock: round2(num(p.stock) + num(item.qty)) } : p) };
-        const old = arr[idx];
-        return { ...d, purchases: arr.map(x => x.id === item.id ? item : x), products: d.products.map(p => {
-          let st = num(p.stock);
-          if (p.id === old.productId) st -= num(old.qty);
-          if (p.id === item.productId) st += num(item.qty);
-          return (p.id === old.productId || p.id === item.productId) ? { ...p, stock: round2(Math.max(0, st)) } : p;
-        }) };
+        // Compra entra no estoque da propriedade de destino (ou "Não alocado")
+        let products = d.products;
+        const old = idx === -1 ? null : arr[idx];
+        if (old) products = products.map(p => p.id === old.productId ? addStock(p, old.propertyId, -num(old.qty)) : p);
+        products = products.map(p => p.id === item.productId ? addStock(p, item.propertyId, num(item.qty)) : p);
+        return { ...d, purchases: old ? arr.map(x => x.id === item.id ? item : x) : [...arr, item], products };
       }
       return { ...d, [key]: idx === -1 ? [...arr, item] : arr.map(x => x.id === item.id ? item : x) };
     });
+    setModal(null);
+  };
+
+  // Transferência entre propriedades (fica registrada no próprio produto, em p.moves)
+  const saveTransfer = (t) => {
+    if (!isMaster) { setModal(null); return; }
+    setData(d => ({ ...d, products: d.products.map(p => {
+      if (p.id !== t.productId) return p;
+      const m = sbp(p); const from = bucketKey(t.from), to = bucketKey(t.to);
+      const q = Math.min(num(t.qty), num(m[from]));
+      if (!(q > 0) || from === to) return p;
+      m[from] = num(m[from]) - q; m[to] = num(m[to]) + q;
+      const mv = { id: Date.now(), date: t.date, from, to, qty: round2(q), notes: t.notes || "", by: currentUser.name, at: new Date().toISOString() };
+      return { ...withSbp(p, m), moves: [...(p.moves || []), mv] };
+    }) }));
     setModal(null);
   };
 
@@ -481,7 +543,7 @@ export default function App() {
         if (!app) return d;
         return { ...d,
           applications: d.applications.filter(a => String(a.id) !== String(id)),
-          products: d.products.map(p => String(p.id) === String(app.productId) ? { ...p, stock: round2(num(p.stock) + num(app.qty)) } : p) };
+          products: d.products.map(p => String(p.id) === String(app.productId) ? giveBack(p, app) : p) };
       });
       setConfirm(null);
       return;
@@ -493,8 +555,20 @@ export default function App() {
         if (!pu) return d;
         return { ...d,
           purchases: d.purchases.filter(x => String(x.id) !== String(id)),
-          products: d.products.map(p => String(p.id) === String(pu.productId) ? { ...p, stock: round2(Math.max(0, num(p.stock) - num(pu.qty))) } : p) };
+          products: d.products.map(p => String(p.id) === String(pu.productId) ? addStock(p, pu.propertyId, -num(pu.qty)) : p) };
       });
+      setConfirm(null);
+      return;
+    }
+    if (type === "transfer") {
+      // Desfazer transferência: devolve à origem (só se o destino ainda tiver a quantidade)
+      setData(d => ({ ...d, products: d.products.map(p => {
+        if (String(p.id) !== String(id.productId)) return p;
+        const mv = (p.moves || []).find(x => x.id === id.moveId);
+        if (!mv || stockAt(p, mv.to) < num(mv.qty)) return p;
+        const m = sbp(p); m[mv.to] = num(m[mv.to]) - num(mv.qty); m[mv.from] = num(m[mv.from]) + num(mv.qty);
+        return { ...withSbp(p, m), moves: p.moves.filter(x => x.id !== mv.id) };
+      }) }));
       setConfirm(null);
       return;
     }
@@ -547,7 +621,7 @@ export default function App() {
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.18</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.19</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -815,6 +889,7 @@ export default function App() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontWeight: 500, fontSize: 16, margin: 0 }}>Estoque</p>
               {stockRO ? <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>👁 Somente visualização</span> : <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => setModal({ type: "transfer", item: { date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.blue, color: "#fff", border: "none", borderRadius: 20, padding: "5px 12px", cursor: "pointer" }}>⇄ Transferir</button>
                 <button onClick={() => setModal({ type: "purchase", item: {} })} style={{ fontSize: 12, background: COLORS.teal, color: "#fff", border: "none", borderRadius: 20, padding: "5px 12px", cursor: "pointer" }}>+ Compra</button>
                 <button onClick={() => setModal({ type: "product", item: {} })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "5px 12px", cursor: "pointer" }}>+ Produto</button>
               </div>}
@@ -834,6 +909,27 @@ export default function App() {
                 onEdit={stockRO ? null : () => setModal({ type: "product", item: { ...p } })}
                 onDelete={stockRO ? null : () => setConfirm({ type: "product", id: p.id, label: p.name })} />
             ))}
+            <SectionTitle>Transferências</SectionTitle>
+            {(() => {
+              const moves = data.products
+                .filter(p => stockFilter === "defensivo" ? isDefensivo(p.type) : isAdubo(p.type))
+                .flatMap(p => (p.moves || []).map(mv => ({ ...mv, p })))
+                .filter(mv => isMaster || canSeeProp(mv.from === NONE ? null : mv.from) || canSeeProp(mv.to === NONE ? null : mv.to))
+                .sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id);
+              if (!moves.length) return <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: "0 0 12px" }}>Nenhuma transferência registrada.</p>;
+              return moves.map(mv => (
+                <div key={mv.p.id + "-" + mv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "0.5px solid var(--color-border-tertiary)", fontSize: 13 }}>
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 500 }}>{mv.p.name + " · " + fmtQty(mv.p, mv.qty)}</p>
+                    <p style={{ margin: 0, color: "var(--color-text-secondary)", fontSize: 12 }}>{bucketName(mv.from, data.properties) + " → " + bucketName(mv.to, data.properties) + " · " + mv.date + (mv.by ? " · " + mv.by : "")}</p>
+                    {mv.notes && <p style={{ margin: 0, color: "var(--color-text-secondary)", fontSize: 12 }}>{mv.notes}</p>}
+                  </div>
+                  {isMaster && stockAt(mv.p, mv.to) >= num(mv.qty) && (
+                    <button onClick={() => setConfirm({ type: "transfer", id: { productId: mv.p.id, moveId: mv.id }, label: "a transferência de " + mv.p.name + " (volta para " + bucketName(mv.from, data.properties) + ")" })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>↩︎ Desfazer</button>
+                  )}
+                </div>
+              ));
+            })()}
             <SectionTitle>Histórico de compras</SectionTitle>
             {/* Filtro por tipo */}
             <select value={purchaseTypeFilter} onChange={e => setPurchaseTypeFilter(e.target.value)} style={{ width: "100%", marginBottom: 12, padding: "8px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", fontSize: 14 }}>
@@ -848,7 +944,7 @@ export default function App() {
               if (purchaseTypeFilter && prod.type !== purchaseTypeFilter) return null;
               return (
                 <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "0.5px solid var(--color-border-tertiary)", fontSize: 13 }}>
-                  <div><p style={{ margin: 0, fontWeight: 500 }}>{prod.name}</p><p style={{ margin: 0, color: "var(--color-text-secondary)", fontSize: 12 }}>{c.date + " · " + c.qty + " " + prod.unit}</p></div>
+                  <div><p style={{ margin: 0, fontWeight: 500 }}>{prod.name}</p><p style={{ margin: 0, color: "var(--color-text-secondary)", fontSize: 12 }}>{c.date + " · " + c.qty + " " + prod.unit + " → " + bucketName(bucketKey(c.propertyId), data.properties)}</p></div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <p style={{ margin: 0, color: COLORS.teal, fontWeight: 500 }}>{"R$ " + (c.totalCost || 0).toLocaleString("pt-BR")}</p>
                     {!stockRO && <><button onClick={() => setModal({ type: "purchase", item: { ...c } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>
@@ -975,7 +1071,7 @@ export default function App() {
         )}
       </div>
 
-      {modal && <FormModal modal={modal} data={vd} onClose={() => setModal(null)} onSave={save} />}
+      {modal && <FormModal modal={modal} data={vd} onClose={() => setModal(null)} onSave={(type, item) => type === "transfer" ? saveTransfer(item) : save(type, item)} />}
       {pwOpen && <PasswordModal user={users.find(u => String(u.id) === String(currentUser.id)) || currentUser} onClose={() => setPwOpen(false)}
         onSave={(hash) => { setUsers(us => us.map(u => String(u.id) === String(currentUser.id) ? { ...u, password: hash } : u)); setCurrentUser(cu => ({ ...cu, password: hash })); }} />}
 
@@ -1039,6 +1135,7 @@ function FormModal({ modal, data, onClose, onSave }) {
     product: isEdit ? "Editar Produto" : "Cadastrar Produto",
     schedule: isEdit ? "Editar Agendamento" : "Novo Agendamento",
     property: isEdit ? "Editar Lavoura" : "Nova Lavoura",
+    transfer: "Transferir entre propriedades",
   };
 
   const submit = () => {
@@ -1054,13 +1151,29 @@ function FormModal({ modal, data, onClose, onSave }) {
       if (!hasDate(form)) { setStockError("Informe a data da aplicação."); return; }
       if (bagMode && !(Number(form.bags) > 0)) { setStockError("Informe a quantidade de sacos."); return; }
       if (!bagMode && !(qty > 0)) { setStockError("Informe a quantidade."); return; }
-      if (!isEdit && prod && prod.stock <= 0) { setStockError("Produto sem estoque. Registre uma compra primeiro."); return; }
-      if (!isEdit && prod && qty > prod.stock) { setStockError("Quantidade (" + qty + " " + prod.unit + ") maior que o estoque (" + prod.stock + " " + prod.unit + ")."); return; }
+      // Disponível = estoque da propriedade + Não alocado (na edição, soma o que esta aplicação já tinha tirado)
+      const oldApp = isEdit ? modal.item : null;
+      const back = oldApp && oldApp.productId === prod.id ? (oldApp.takenFrom && Object.keys(oldApp.takenFrom).length ? oldApp.takenFrom : { [NONE]: num(oldApp.qty) }) : {};
+      const kP = bucketKey(form.propertyId);
+      const avail = stockAt(prod, kP) + num(back[kP]) + (kP === NONE ? 0 : stockAt(prod, NONE) + num(back[NONE]));
+      if (avail <= 0) { setStockError("Sem estoque deste produto nesta propriedade nem no Não alocado. Registre uma compra ou peça uma transferência."); return; }
+      if (qty > avail + 0.001) { setStockError("Quantidade (" + round2(qty) + " " + prod.unit + ") maior que o disponível para esta propriedade (" + round2(avail) + " " + prod.unit + ")."); return; }
       setStockError("");
       delete base.appType;
       onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied) || prop?.area || 0, qty, bags: bagMode ? Number(form.bags) : null });
     } else if (modal.type === "purchase") {
-      onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost) });
+      onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost), propertyId: form.propertyId && form.propertyId !== NONE ? Number(form.propertyId) : null });
+    } else if (modal.type === "transfer") {
+      const prod = data.products.find(p => p.id === Number(form.productId));
+      const bagMode = isAdubo(prod?.type) && prod?.bagWeight;
+      const qty = bagMode ? num(form.bags) * prod.bagWeight : num(form.qty);
+      if (!prod) { setStockError("Escolha o produto."); return; }
+      if (!form.from || !form.to) { setStockError("Escolha a origem e o destino."); return; }
+      if (bucketKey(form.from) === bucketKey(form.to)) { setStockError("Origem e destino são iguais."); return; }
+      if (!hasDate(form)) { setStockError("Informe a data da transferência."); return; }
+      if (!(qty > 0)) { setStockError("Informe a quantidade."); return; }
+      if (qty > stockAt(prod, form.from) + 0.001) { setStockError("A origem só tem " + fmtQty(prod, stockAt(prod, form.from)) + "."); return; }
+      onSave("transfer", { productId: prod.id, from: form.from, to: form.to, qty, date: form.date, notes: form.notes });
     } else if (modal.type === "product") {
       onSave("product", { ...base, activeIngredient: isDefensivo(form.type) ? (form.activeIngredient || "").trim() : null, dosePerHa: Number(form.dosePerHa) || 0, bagWeight: form.bagWeight ? Number(form.bagWeight) : null });
     } else if (modal.type === "schedule") {
@@ -1105,7 +1218,10 @@ function FormModal({ modal, data, onClose, onSave }) {
           {prod && (
             <div style={{ background: stockOk ? "rgba(255,255,255,0.15)" : "rgba(163,45,45,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
               <p style={{ margin: 0, fontSize: 12, color: "#fff", fontWeight: 500 }}>
-                {stockOk ? "✅ Estoque: " + prod.stock + " " + prod.unit : "⚠️ Sem estoque — registre uma compra primeiro"}
+                {!stockOk ? "⚠️ Sem estoque — registre uma compra primeiro"
+                  : form.propertyId
+                    ? "✅ Nesta propriedade: " + fmtQty(prod, stockAt(prod, form.propertyId)) + " · Não alocado: " + fmtQty(prod, stockAt(prod, NONE))
+                    : "✅ Estoque total: " + fmtQty(prod, prod.stock) + " (escolha a propriedade para ver o saldo dela)"}
               </p>
             </div>
           )}
@@ -1131,12 +1247,36 @@ function FormModal({ modal, data, onClose, onSave }) {
         </div>
       );
     }
+    if (modal.type === "transfer") {
+      const prod = data.products.find(p => p.id === Number(form.productId));
+      const bagMode = isAdubo(prod?.type) && prod?.bagWeight;
+      const buckets = [{ value: NONE, name: "Não alocado" }, ...data.properties.map(p => ({ value: String(p.id), name: p.name }))];
+      return (
+        <div>
+          {sel("Tipo de produto", "trType", PRODUCT_TYPES.map(t => ({ value: t, label: t })))}
+          {sel("Produto", "productId", data.products.filter(p => (!form.trType || p.type === form.trType) && num(p.stock) > 0).slice().sort(byName)
+            .map(p => ({ value: p.id, label: p.name + (p.activeIngredient ? " · " + p.activeIngredient : "") })))}
+          {sel("De (origem)", "from", buckets.filter(b => !prod || stockAt(prod, b.value) > 0).map(b => ({ value: b.value, label: b.name + (prod ? " — " + fmtQty(prod, stockAt(prod, b.value)) : "") })))}
+          {sel("Para (destino)", "to", buckets.filter(b => b.value !== form.from).map(b => ({ value: b.value, label: b.name + (prod ? " — " + fmtQty(prod, stockAt(prod, b.value)) : "") })))}
+          {inp("Data da transferência *", "date", "date")}
+          {bagMode ? (
+            <div>
+              {inp("Quantidade de sacos", "bags", "number", "Ex: 20", "sacos")}
+              {num(form.bags) > 0 && <p style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", margin: "-8px 0 14px" }}>{"= " + (num(form.bags) * prod.bagWeight).toLocaleString("pt-BR") + " kg"}</p>}
+            </div>
+          ) : inp("Quantidade (" + (prod ? prod.unit : "unid") + ")", "qty", "number", "Ex: 10", prod ? prod.unit : "")}
+          {stockError && <div style={{ background: "rgba(163,45,45,0.4)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}><p style={{ margin: 0, fontSize: 12, color: "#fff" }}>⚠️ {stockError}</p></div>}
+          {inp("Observação", "notes", "text", "Ex: levado no caminhão da fazenda")}
+        </div>
+      );
+    }
     if (modal.type === "purchase") {
       const prod = data.products.find(p => p.id === Number(form.productId));
       return (
         <div>
           {sel("Tipo de produto", "purchaseType", PRODUCT_TYPES.map(t => ({ value: t, label: t })))}
           {sel("Produto", "productId", data.products.filter(p => !form.purchaseType || p.type === form.purchaseType).map(p => ({ value: p.id, label: p.name })))}
+          {sel("Entra no estoque de", "propertyId", [{ value: NONE, label: "Não alocado (estoque geral)" }, ...data.properties.map(p => ({ value: p.id, label: p.name }))])}
           {inp("Data da compra", "date", "date")}
           {inp("Quantidade comprada", "qty", "number", "Ex: 200", prod ? prod.unit : "")}
           {inp("Custo total (R$)", "totalCost", "number", "Ex: 1500.00")}
