@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { saveData, loadData, saveUsers, loadUsers } from "./firebase";
+import { useState, useEffect, useRef } from "react";
+import { loadData, saveUsers, loadUsers, updateUsers, updateData, subscribeData } from "./firebase";
 import { DEFAULT_USERS, authenticate, hashPassword, canEdit, canDelete, canViewReports, canManageUsers, filterPropertiesByUser } from "./auth";
 import LoginScreen from "./LoginScreen";
 import UserManager from "./UserManager";
@@ -87,6 +87,13 @@ const fmtQty = (p, q) => round2(q) + " " + (p?.unit || "") + (isAdubo(p?.type) &
 const byName = (a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
 // Aplicação sem data válida (registros antigos)
 const hasDate = (a) => !!a.date && !isNaN(new Date(a.date + "T12:00").getTime());
+// Mês de referência no cronograma (adubos): "AAAA-MM". Sem ele, vale o mês da data da aplicação.
+const monthKey = (y, m) => y + "-" + String(m + 1).padStart(2, "0");
+const currentRefKey = () => { const n = new Date(); return monthKey(n.getFullYear(), n.getMonth()); };
+const refKey = (a) => a.refMonth || (hasDate(a) ? a.date.slice(0, 7) : null);
+const refLabel = (k) => { if (!k) return ""; const [y, m] = k.split("-"); return MONTHS[Number(m) - 1] + "/" + y; };
+// A aplicação está no cronograma daquele produto/propriedade no mês de referência?
+const inSchedule = (schedules, a) => { const k = refKey(a); return !!k && (schedules || []).some(s => String(s.productId) === String(a.productId) && String(s.propertyId) === String(a.propertyId) && (s.months || []).includes(Number(k.slice(5)))); };
 // Formata número de sacos: inteiro sem casas, fracionado com 1 casa (ex.: 64 ou 12,5)
 const fmtSacos = (n) => Number.isInteger(round2(n)) ? String(round2(n)) : n.toFixed(1).replace(".", ",");
 // Quantidade planejada por mês: usa a quantidade informada no cronograma; se não houver, dose/ha × área
@@ -154,6 +161,50 @@ const PillTabs = ({ tabs, value, onChange }) => (
     ))}
   </div>
 );
+
+// ── Sincronização segura entre aparelhos ─────────────────────────
+// Cada aparelho guarda a "base" (última versão confirmada do Firebase). Ao salvar, calcula só o que
+// mudou em relação à base (incluído, alterado, excluído) e aplica essas mudanças sobre a versão ATUAL
+// do Firebase. Assim um celular não apaga o que outro registrou.
+const COLS = ["properties", "products", "schedules", "applications", "purchases", "notifications"];
+const EMPTY_DATA = { properties: [], products: [], schedules: [], applications: [], purchases: [], notifications: [] };
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const byIdMap = (arr) => { const m = new Map(); (arr || []).forEach(x => m.set(String(x.id), x)); return m; };
+// Produto alterado: campos comuns ficam com a versão deste aparelho; estoque é somado como DIFERENÇA
+// (ex.: aplicação de 100 kg aqui e compra de 500 kg em outro aparelho = as duas valem)
+const mergeProduct = (remote, base, local) => {
+  const out = { ...remote };
+  Object.keys(local).forEach(k => { if (!["stock", "stockByProp", "moves"].includes(k) && !same(local[k], base[k])) out[k] = local[k]; });
+  const rs = sbp(remote), bs = sbp(base), ls = sbp(local);
+  const keys = new Set([...Object.keys(rs), ...Object.keys(bs), ...Object.keys(ls)]);
+  const m = {}; keys.forEach(k => { m[k] = num(rs[k]) + num(ls[k]) - num(bs[k]); });
+  const baseMv = byIdMap(base.moves), localMv = byIdMap(local.moves);
+  const moves = (remote.moves || []).filter(mv => !(baseMv.has(String(mv.id)) && !localMv.has(String(mv.id))));
+  const have = new Set(moves.map(mv => String(mv.id)));
+  (local.moves || []).forEach(mv => { if (!baseMv.has(String(mv.id)) && !have.has(String(mv.id))) moves.push(mv); });
+  return { ...withSbp(out, m), moves };
+};
+// Notificação alterada: junta quem já leu nos dois aparelhos
+const mergeNotif = (remote, base, local) => ({ ...remote, ...local, readBy: [...new Set([...(remote.readBy || []), ...(local.readBy || [])].map(String))] });
+// Aplica sobre "target" as mudanças que levaram de "base" a "local"
+const applyDiff = (target, base, local) => {
+  const out = { ...EMPTY_DATA, ...target };
+  COLS.forEach(col => {
+    const bMap = byIdMap(base?.[col]), lMap = byIdMap(local?.[col]);
+    let arr = (target?.[col] || []).filter(x => !(bMap.has(String(x.id)) && !lMap.has(String(x.id))));
+    (local?.[col] || []).forEach(item => {
+      const id = String(item.id), b = bMap.get(id);
+      if (b && same(b, item)) return; // não mudou neste aparelho
+      const i = arr.findIndex(x => String(x.id) === id);
+      if (i < 0) { if (!b) arr.push(item); return; } // excluído em outro aparelho e alterado aqui: mantém excluído
+      if (b && col === "products") arr[i] = mergeProduct(arr[i], b, item);
+      else if (b && col === "notifications") arr[i] = mergeNotif(arr[i], b, item);
+      else arr[i] = item;
+    });
+    out[col] = arr;
+  });
+  return out;
+};
 
 const initData = {
   properties: [
@@ -321,7 +372,7 @@ const PasswordModal = ({ user, onSave, onClose }) => {
     if (f.nova.length < 4) return setErr("A nova senha precisa ter pelo menos 4 caracteres.");
     if (f.nova !== f.conf) return setErr("A confirmação não confere com a nova senha.");
     if (f.nova === f.cur) return setErr("A nova senha é igual à atual.");
-    onSave(hashPassword(f.nova)); setOk(true);
+    Promise.resolve(onSave(hashPassword(f.nova))).then(ok => ok === false ? setErr("Sem conexão: a senha não foi alterada. Tente de novo com internet.") : setOk(true));
   };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 150, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
@@ -353,6 +404,13 @@ const PasswordModal = ({ user, onSave, onClose }) => {
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [data, setData] = useState(initData);
+  const baseRef = useRef(null);      // última versão confirmada no Firebase
+  const dataRef = useRef(initData);  // versão atual na tela
+  dataRef.current = data;
+  const syncingRef = useRef(false);
+  const againRef = useRef(false);
+  const retryRef = useRef(null);
+  const [syncPending, setSyncPending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedProp, setSelectedProp] = useState(1);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
@@ -382,9 +440,20 @@ export default function App() {
   useEffect(() => {
     const load = async () => {
       try {
+        // loadData/loadUsers LANÇAM erro se a leitura falhar (cai no catch abaixo e nada é gravado).
+        // null = documento ainda não existe (primeira instalação).
         const [saved, savedUsers] = await Promise.all([loadData(), loadUsers()]);
-        if (saved) setData(saved);
-        setUsers(savedUsers || DEFAULT_USERS.map(u => ({ ...u, password: hashPassword(u.password) })));
+        if (saved) { baseRef.current = saved; setData(saved); } else { baseRef.current = EMPTY_DATA; }
+        if (Array.isArray(savedUsers) && savedUsers.length > 0) {
+          setUsers(savedUsers);
+        } else if (savedUsers === null) {
+          // Primeira instalação: cria o usuário master padrão no Firebase
+          const defaults = DEFAULT_USERS.map(u => ({ ...u, password: hashPassword(u.password) }));
+          await saveUsers(defaults);
+          setUsers(defaults);
+        } else {
+          throw new Error("Lista de usuários vazia no Firebase");
+        }
       } catch (err) {
         // Proteção: se não conseguiu ler o Firebase, NÃO grava nada por cima
         console.error("Erro ao carregar dados:", err);
@@ -396,15 +465,83 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!loading && !loadFailed && currentUser) saveData(data);
+    // Salva só o que mudou neste aparelho (ver applyDiff), com uma pequena espera para juntar cliques
+    if (loading || loadFailed || !currentUser || data === baseRef.current) return;
+    const t = setTimeout(() => syncData(), 400);
+    return () => clearTimeout(t);
   }, [data]);
 
-  useEffect(() => {
-    if (!loading && !loadFailed && users.length > 0) saveUsers(users);
-  }, [users]);
+  const syncData = async () => {
+    if (syncingRef.current) { againRef.current = true; return; }
+    const base = baseRef.current, local = dataRef.current;
+    if (!base || local === base) return;
+    syncingRef.current = true;
+    try {
+      const merged = await updateData(remote => applyDiff(remote, base, local));
+      const cur = dataRef.current;
+      baseRef.current = merged;
+      // Se a pessoa mexeu em algo enquanto salvava, reaplica essas mudanças sobre a versão salva
+      setData(cur === local ? merged : applyDiff(merged, local, cur));
+      setSyncPending(false);
+      if (retryRef.current) { clearTimeout(retryRef.current); retryRef.current = null; }
+    } catch (e) {
+      console.error("Erro ao salvar dados:", e);
+      setSyncPending(true);
+      if (!retryRef.current) retryRef.current = setTimeout(() => { retryRef.current = null; syncData(); }, 15000);
+    } finally {
+      syncingRef.current = false;
+      if (againRef.current) { againRef.current = false; syncData(); }
+    }
+  };
 
-  const handleLogin = (username, password) => {
-    const user = authenticate(users, username, password);
+  // Recebe em tempo real o que outros aparelhos gravaram
+  useEffect(() => {
+    if (loading || loadFailed) return;
+    let unsub = () => {};
+    try {
+      unsub = subscribeData(remote => {
+        if (syncingRef.current) return; // a gravação em andamento já traz a versão nova
+        const base = baseRef.current, local = dataRef.current;
+        if (same(remote, base)) return;
+        baseRef.current = remote;
+        setData(local === base ? remote : applyDiff(remote, base, local));
+      }, err => console.error("Erro na sincronização:", err));
+    } catch (e) { console.error(e); }
+    return () => unsub();
+  }, [loading, loadFailed]);
+
+  // Usuários NÃO são mais salvos automaticamente a cada mudança da lista.
+  // Toda alteração passa por changeUsers, que aplica só a diferença sobre a lista atual do Firebase.
+  const changeUsers = async (newList) => {
+    const prev = users;
+    const prevIds = new Set(prev.map(u => String(u.id)));
+    const nextIds = new Set(newList.map(u => String(u.id)));
+    const removed = prev.filter(u => !nextIds.has(String(u.id))).map(u => String(u.id));
+    const changed = newList.filter(u => { const o = prev.find(x => String(x.id) === String(u.id)); return !o || JSON.stringify(o) !== JSON.stringify(u); });
+    try {
+      const saved = await updateUsers(current => {
+        let list = current.filter(u => !removed.includes(String(u.id)));
+        changed.forEach(u => {
+          const i = list.findIndex(x => String(x.id) === String(u.id));
+          if (i >= 0) list[i] = u; else list.push(u);
+        });
+        return list;
+      });
+      setUsers(saved);
+      return true;
+    } catch (e) {
+      console.error("Erro ao salvar usuários:", e);
+      alert("Não foi possível salvar a alteração de usuários. Verifique a internet e tente de novo. Nada foi alterado.");
+      return false;
+    }
+  };
+
+  const handleLogin = async (username, password) => {
+    let user = authenticate(users, username, password);
+    if (!user) {
+      // Usuário pode ter sido criado em outro aparelho depois que este app abriu: recarrega a lista
+      try { const fresh = await loadUsers(); if (Array.isArray(fresh) && fresh.length) { setUsers(fresh); user = authenticate(fresh, username, password); } } catch (e) { /* sem internet: mantém a lista atual */ }
+    }
     if (user) { setCurrentUser(user); setLoginError(""); }
     else setLoginError("Usuário ou senha incorretos.");
   };
@@ -475,7 +612,7 @@ export default function App() {
   // ── Planejado vs Realizado ────────────────────────────────────────
   const appliedQtyForSchedule = (s, monthIdx) => {
     return vd.applications
-      .filter(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date).getMonth() === monthIdx)
+      .filter(a => a.productId === s.productId && a.propertyId === s.propertyId && refKey(a) && Number(refKey(a).slice(5)) - 1 === monthIdx)
       .reduce((sum, a) => sum + Number(a.qty), 0);
   };
 
@@ -619,9 +756,14 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
+      {syncPending && (
+        <div style={{ background: COLORS.amberLight, color: COLORS.amber, fontSize: 12, fontWeight: 500, padding: "6px 12px", textAlign: "center" }}>
+          ⚠️ Sem conexão: as últimas alterações ainda não foram salvas. Não feche o app; o envio é tentado de novo sozinho.
+        </div>
+      )}
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.19</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.22</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -706,7 +848,7 @@ export default function App() {
                         ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>✓ 100%</span>
                         : semEstoque
                           ? <span style={{ fontSize: 12, color: COLORS.red, background: COLORS.redLight, padding: "4px 10px", borderRadius: 20 }}>Sem estoque</span>
-                          : isLeitura ? null : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: pr?.area, qty: ((planned - applied) > 0 ? (planned - applied).toFixed(1) : ""), date: new Date().toISOString().split("T")[0] } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                          : isLeitura ? null : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: pr?.area, qty: ((planned - applied) > 0 ? (planned - applied).toFixed(1) : ""), date: new Date().toISOString().split("T")[0], refMonth: currentRefKey() } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>
                             {pct > 0 ? "Completar" : "Registrar"}
                           </button>}
                     </div>
@@ -774,7 +916,7 @@ export default function App() {
                 // Percentual realizado no mês/ano selecionado (só fica completo com 100%)
                 const selM = SCHED_MONTHS[calMonthIdx];
                 const planned = Number(totalQty);
-                const applied = vd.applications.filter(a => a.productId === s.productId && a.propertyId === s.propertyId && new Date(a.date + "T12:00").getMonth() === selM.month && new Date(a.date + "T12:00").getFullYear() === selM.year).reduce((t, a) => t + num(a.qty), 0);
+                const applied = vd.applications.filter(a => a.productId === s.productId && a.propertyId === s.propertyId && refKey(a) === monthKey(selM.year, selM.month)).reduce((t, a) => t + num(a.qty), 0);
                 const pct = planned > 0 ? Math.min(100, (applied / planned) * 100) : (applied > 0 ? 100 : 0);
                 const done = pct >= 100;
                 const remaining = Math.max(0, planned - applied);
@@ -796,7 +938,7 @@ export default function App() {
                           ? <span style={{ fontSize: 12, color: COLORS.green, background: COLORS.greenLight, padding: "4px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>✓ 100%</span>
                           : semEstoque
                             ? <span style={{ fontSize: 11, color: COLORS.red, background: COLORS.redLight, padding: "4px 8px", borderRadius: 20 }}>Sem estoque</span>
-                            : isLeitura ? null : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: remaining.toFixed(1), date: regDate } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>{pct > 0 ? "Completar" : "Registrar"}</button>}
+                            : isLeitura ? null : <button onClick={() => setModal({ type: "application", item: { productId: s.productId, propertyId: s.propertyId, areaApplied: area, qty: remaining.toFixed(1), date: isAdubo(prod?.type) ? new Date().toISOString().split("T")[0] : regDate, refMonth: monthKey(selM.year, selM.month) } })} style={{ fontSize: 12, background: COLORS.green, color: "#fff", border: "none", borderRadius: 20, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>{pct > 0 ? "Completar" : "Registrar"}</button>}
                       </div>
                     </div>
                     <p style={{ fontSize: 14, color: "var(--color-text-primary)", margin: "6px 0 0", lineHeight: 1.6 }}>{(s.qty ? "Qtd/mês: " : "Dose: " + prod?.dosePerHa + " " + prod?.unit + "/ha · Total: ") }<strong>{totalQty + " " + prod?.unit}</strong>{sacos !== null && <>{" "}<SacosChip n={sacos} /></>}</p>
@@ -864,6 +1006,12 @@ export default function App() {
                         <p style={{ fontWeight: 500, margin: "0 0 2px", fontSize: 14 }}>{prod?.name}</p>
                         <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "0 0 4px" }}>{(pr?.name || "") + " · " + (hasDate(a) ? a.date : "⚠️ Sem data")}</p>
                         <Badge label={prod?.type} type={prod?.type} />
+                        {isAdubo(prod?.type) && a.refMonth && hasDate(a) && a.refMonth !== a.date.slice(0, 7) && (
+                          <span style={{ fontSize: 11, marginLeft: 6, color: COLORS.blue, background: COLORS.blueLight, padding: "2px 8px", borderRadius: 20 }}>{"Ref.: " + refLabel(a.refMonth)}</span>
+                        )}
+                        {isAdubo(prod?.type) && !inSchedule(vd.schedules, a) && (
+                          <span style={{ fontSize: 11, marginLeft: 6, color: COLORS.amber, background: COLORS.amberLight, padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>⚠️ Fora do cronograma</span>
+                        )}
                         <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "6px 0 0" }}>
                           {"Total: " + a.qty + " " + (prod?.unit || "")}
                           {sacaria !== null && <span style={{ color: COLORS.green, fontWeight: 600 }}>{" · Sacos: " + sacaria}</span>}
@@ -968,7 +1116,7 @@ export default function App() {
         )}
 
         {tab === "users" && canManageUsers(currentUser.role) && (
-          <UserManager users={users} setUsers={setUsers} properties={data.properties} currentUser={currentUser} />
+          <UserManager users={users} setUsers={changeUsers} properties={data.properties} currentUser={currentUser} />
         )}
 
         {/* RELATÓRIOS */}
@@ -1073,7 +1221,13 @@ export default function App() {
 
       {modal && <FormModal modal={modal} data={vd} onClose={() => setModal(null)} onSave={(type, item) => type === "transfer" ? saveTransfer(item) : save(type, item)} />}
       {pwOpen && <PasswordModal user={users.find(u => String(u.id) === String(currentUser.id)) || currentUser} onClose={() => setPwOpen(false)}
-        onSave={(hash) => { setUsers(us => us.map(u => String(u.id) === String(currentUser.id) ? { ...u, password: hash } : u)); setCurrentUser(cu => ({ ...cu, password: hash })); }} />}
+        onSave={async (hash) => {
+          try {
+            const saved = await updateUsers(list => list.map(u => String(u.id) === String(currentUser.id) ? { ...u, password: hash } : u));
+            setUsers(saved); setCurrentUser(cu => ({ ...cu, password: hash }));
+            return true;
+          } catch (e) { console.error(e); return false; }
+        }} />}
 
       {confirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -1112,6 +1266,7 @@ function FormModal({ modal, data, onClose, onSave }) {
       const prS = data.products.find(p => p.id === Number(it.productId));
       if (prS) it.schedType = prS.type;
     }
+    if (modal.type === "application" && !it.refMonth) it.refMonth = it.id ? (refKey(it) || currentRefKey()) : currentRefKey();
     if (modal.type === "application" && it.productId && !it.appType) {
       const pr0 = data.products.find(p => p.id === Number(it.productId));
       if (pr0) it.appType = pr0.type;
@@ -1160,7 +1315,7 @@ function FormModal({ modal, data, onClose, onSave }) {
       if (qty > avail + 0.001) { setStockError("Quantidade (" + round2(qty) + " " + prod.unit + ") maior que o disponível para esta propriedade (" + round2(avail) + " " + prod.unit + ")."); return; }
       setStockError("");
       delete base.appType;
-      onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied) || prop?.area || 0, qty, bags: bagMode ? Number(form.bags) : null });
+      onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied) || prop?.area || 0, qty, bags: bagMode ? Number(form.bags) : null, refMonth: isAdubo(prod?.type) ? (form.refMonth || currentRefKey()) : null });
     } else if (modal.type === "purchase") {
       onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost), propertyId: form.propertyId && form.propertyId !== NONE ? Number(form.propertyId) : null });
     } else if (modal.type === "transfer") {
@@ -1227,6 +1382,26 @@ function FormModal({ modal, data, onClose, onSave }) {
           )}
           {sel("Propriedade", "propertyId", data.properties.map(p => ({ value: p.id, label: p.name })))}
           {inp("Data da aplicação *", "date", "date")}
+          {isAdubo(prod?.type) && (() => {
+            const opts = APP_MONTHS.map(m => ({ value: monthKey(m.year, m.month), label: m.label }));
+            if (form.refMonth && !opts.some(o => o.value === form.refMonth)) opts.push({ value: form.refMonth, label: refLabel(form.refMonth) });
+            const dateKey = hasDate(form) ? form.date.slice(0, 7) : null;
+            const ok = !form.propertyId || inSchedule(data.schedules, { productId: prod.id, propertyId: form.propertyId, refMonth: form.refMonth });
+            return (
+              <div>
+                {sel("Mês de referência no cronograma", "refMonth", opts)}
+                {dateKey && form.refMonth && dateKey !== form.refMonth && (
+                  <p style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", margin: "-8px 0 12px" }}>{"Aplicada em " + refLabel(dateKey) + ", conta para o cronograma de " + refLabel(form.refMonth) + "."}</p>
+                )}
+                {!ok && (
+                  <div style={{ background: "rgba(186,117,23,0.45)", borderRadius: 8, padding: "8px 12px", margin: "-4px 0 14px" }}>
+                    <p style={{ margin: 0, fontSize: 12, color: "#fff", fontWeight: 600 }}>{"⚠️ Fora do cronograma: " + prod.name + " não está programado para esta propriedade em " + refLabel(form.refMonth) + "."}</p>
+                    <p style={{ margin: "2px 0 0", fontSize: 12, color: "#fff" }}>Confira o mês de referência. Você pode registrar assim mesmo.</p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {isAdubo(prod?.type) && prod?.bagWeight ? (
             <div>
               {inp("Quantidade de sacos", "bags", "number", "Ex: 108", "sacos")}
