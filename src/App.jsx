@@ -206,6 +206,13 @@ const applyDiff = (target, base, local) => {
   return out;
 };
 
+// ── Cópia local (modo offline) ───────────────────────────────────
+// Guarda neste aparelho a última versão do Firebase (base), o que foi feito aqui (local) e a lista de usuários,
+// para abrir e registrar sem internet. Quando a conexão volta, envia só as diferenças (applyDiff).
+const LS_KEY = "agrogestao_offline_v1";
+const readLS = () => { try { return JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch { return null; } };
+const writeLS = (v) => { try { localStorage.setItem(LS_KEY, JSON.stringify(v)); } catch (e) { console.warn("Sem espaço para a cópia local", e); } };
+
 const initData = {
   properties: [
     { id: 1, name: "Fazenda Santa Rosa", area: 45, location: "Rolim de Moura - RO" },
@@ -411,6 +418,7 @@ export default function App() {
   const againRef = useRef(false);
   const retryRef = useRef(null);
   const [syncPending, setSyncPending] = useState(false);
+  const [offline, setOffline] = useState(false); // abriu com a cópia local, sem conseguir ler o Firebase
   const [loading, setLoading] = useState(true);
   const [selectedProp, setSelectedProp] = useState(1);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
@@ -443,7 +451,13 @@ export default function App() {
         // loadData/loadUsers LANÇAM erro se a leitura falhar (cai no catch abaixo e nada é gravado).
         // null = documento ainda não existe (primeira instalação).
         const [saved, savedUsers] = await Promise.all([loadData(), loadUsers()]);
-        if (saved) { baseRef.current = saved; setData(saved); } else { baseRef.current = EMPTY_DATA; }
+        const st = readLS();
+        if (saved) {
+          baseRef.current = saved;
+          // Registros feitos sem internet e ainda não enviados: reaplica sobre a versão atual do Firebase
+          const hasPending = st && st.base && st.local && !same(st.base, st.local);
+          setData(hasPending ? applyDiff(saved, st.base, st.local) : saved);
+        } else { baseRef.current = EMPTY_DATA; }
         if (Array.isArray(savedUsers) && savedUsers.length > 0) {
           setUsers(savedUsers);
         } else if (savedUsers === null) {
@@ -455,13 +469,35 @@ export default function App() {
           throw new Error("Lista de usuários vazia no Firebase");
         }
       } catch (err) {
-        // Proteção: se não conseguiu ler o Firebase, NÃO grava nada por cima
+        // Proteção: se não conseguiu ler o Firebase, NÃO grava nada por cima.
+        // Se houver cópia local neste aparelho, abre em modo offline com ela.
         console.error("Erro ao carregar dados:", err);
-        setLoadFailed(true);
+        const st = readLS();
+        if (st && st.base && Array.isArray(st.users) && st.users.length) {
+          baseRef.current = st.base;
+          setData(st.local && !same(st.local, st.base) ? st.local : st.base);
+          setUsers(st.users);
+          setOffline(true);
+        } else {
+          setLoadFailed(true);
+        }
       }
       setLoading(false);
     };
     load();
+  }, []);
+
+  // Mantém a cópia local deste aparelho sempre atualizada
+  useEffect(() => {
+    if (loading || loadFailed || !baseRef.current) return;
+    writeLS({ base: baseRef.current, local: data, users, at: new Date().toISOString() });
+  }, [data, users, loading]);
+
+  // Internet voltou: envia o que estiver pendente
+  useEffect(() => {
+    const onOnline = () => { if (dataRef.current !== baseRef.current) syncData(); };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
   }, []);
 
   useEffect(() => {
@@ -469,7 +505,7 @@ export default function App() {
     if (loading || loadFailed || !currentUser || data === baseRef.current) return;
     const t = setTimeout(() => syncData(), 400);
     return () => clearTimeout(t);
-  }, [data]);
+  }, [data, currentUser]);
 
   const syncData = async () => {
     if (syncingRef.current) { againRef.current = true; return; }
@@ -483,6 +519,7 @@ export default function App() {
       // Se a pessoa mexeu em algo enquanto salvava, reaplica essas mudanças sobre a versão salva
       setData(cur === local ? merged : applyDiff(merged, local, cur));
       setSyncPending(false);
+      setOffline(false);
       if (retryRef.current) { clearTimeout(retryRef.current); retryRef.current = null; }
     } catch (e) {
       console.error("Erro ao salvar dados:", e);
@@ -501,6 +538,7 @@ export default function App() {
     try {
       unsub = subscribeData(remote => {
         if (syncingRef.current) return; // a gravação em andamento já traz a versão nova
+        setOffline(false);
         const base = baseRef.current, local = dataRef.current;
         if (same(remote, base)) return;
         baseRef.current = remote;
@@ -756,14 +794,14 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "var(--font-sans)", maxWidth: 420, margin: "0 auto", paddingBottom: 84 }}>
-      {syncPending && (
+      {(syncPending || offline) && (
         <div style={{ background: COLORS.amberLight, color: COLORS.amber, fontSize: 12, fontWeight: 500, padding: "6px 12px", textAlign: "center" }}>
-          ⚠️ Sem conexão: as últimas alterações ainda não foram salvas. Não feche o app; o envio é tentado de novo sozinho.
+          {"📴 Modo offline: " + (data !== baseRef.current ? "há registros guardados neste celular, que serão enviados" : "os registros ficam guardados neste celular e são enviados") + " automaticamente quando a internet voltar."}
         </div>
       )}
       <div style={{ background: COLORS.green, color: "#fff", padding: "1rem 1.25rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.22</span></div>
+          <div style={{ fontSize: 18, fontWeight: 500 }}>🌿 AgroGestão <span style={{ fontSize: 11, opacity: 0.8 }}>v1.23</span></div>
           <div style={{ fontSize: 12, opacity: 0.85 }}>{currentUser.name} · <span style={{ opacity: 0.75 }}>{currentUser.role}</span></div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -1020,6 +1058,10 @@ export default function App() {
                         {a.notes && <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 0" }}>{a.notes}</p>}
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {!isLeitura && <button title="Copiar aplicação" onClick={() => setModal({ type: "application", item: {
+                          productId: a.productId, propertyId: a.propertyId, appType: prod?.type, qty: a.qty, bags: a.bags ?? null, notes: a.notes || "",
+                          date: new Date().toISOString().split("T")[0], refMonth: currentRefKey(), copiedFrom: a.id } })}
+                          style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>📋</button>}
                         {!isLeitura && <button onClick={() => setModal({ type: "application", item: { ...a } })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer" }}>✏️</button>}
                         {!isLeitura && <button onClick={() => setConfirm({ type: "application", id: a.id, label: prod?.name })} style={{ fontSize: 12, background: "none", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 14, padding: "2px 8px", cursor: "pointer", color: COLORS.red }}>🗑</button>}
                       </div>
@@ -1285,7 +1327,7 @@ function FormModal({ modal, data, onClose, onSave }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const titleMap = {
-    application: isEdit ? "Editar Aplicação" : "Registrar Aplicação",
+    application: isEdit ? "Editar Aplicação" : modal.item?.copiedFrom ? "Copiar Aplicação" : "Registrar Aplicação",
     purchase: isEdit ? "Editar Compra" : "Registrar Compra",
     product: isEdit ? "Editar Produto" : "Cadastrar Produto",
     schedule: isEdit ? "Editar Agendamento" : "Novo Agendamento",
@@ -1315,6 +1357,7 @@ function FormModal({ modal, data, onClose, onSave }) {
       if (qty > avail + 0.001) { setStockError("Quantidade (" + round2(qty) + " " + prod.unit + ") maior que o disponível para esta propriedade (" + round2(avail) + " " + prod.unit + ")."); return; }
       setStockError("");
       delete base.appType;
+      delete base.copiedFrom;
       onSave("application", { ...base, productId: Number(form.productId), propertyId: Number(form.propertyId), areaApplied: Number(form.areaApplied) || prop?.area || 0, qty, bags: bagMode ? Number(form.bags) : null, refMonth: isAdubo(prod?.type) ? (form.refMonth || currentRefKey()) : null });
     } else if (modal.type === "purchase") {
       onSave("purchase", { ...base, productId: Number(form.productId), qty: Number(form.qty), totalCost: Number(form.totalCost), propertyId: form.propertyId && form.propertyId !== NONE ? Number(form.propertyId) : null });
